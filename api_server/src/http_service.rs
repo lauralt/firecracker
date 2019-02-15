@@ -80,6 +80,8 @@ enum Error<'a> {
     InvalidPathMethod(&'a str, Method),
     // An error occurred when deserializing the json body of a request.
     SerdeJson(serde_json::Error),
+    // Data encryption is not implemented yet.
+    EncrNotImplemented,
 }
 
 // It's convenient to turn errors into HTTP responses directly.
@@ -106,7 +108,11 @@ impl<'a> Into<hyper::Response> for Error<'a> {
             ),
             Error::SerdeJson(e) => {
                 json_response(StatusCode::BadRequest, json_fault_message(e.to_string()))
-            }
+            },
+            Error::EncrNotImplemented => json_response(
+                StatusCode::NotImplemented,
+                json_fault_message("Data encryption is not implemented yet."),
+            ),
         }
     }
 }
@@ -211,6 +217,7 @@ fn parse_drives_req<'a>(path: &'a str, method: Method, body: &Chunk) -> Result<'
         return Err(Error::EmptyID);
     };
 
+
     match path_tokens[1..].len() {
         1 if method == Method::Put => {
             METRICS.put_api_requests.drive_count.inc();
@@ -219,6 +226,13 @@ fn parse_drives_req<'a>(path: &'a str, method: Method, body: &Chunk) -> Result<'
                 METRICS.put_api_requests.drive_fails.inc();
                 Error::SerdeJson(e)
             })?;
+
+            {
+                let encryption_desc = &device_cfg.encryption_description;
+                if *encryption_desc != None {
+                    return Err(Error::EncrNotImplemented);
+                }
+            }
             Ok(device_cfg
                 .into_parsed_request(Some(id_from_path.to_string()), method)
                 .map_err(|s| {
@@ -650,6 +664,8 @@ mod tests {
     use vmm::vmm_config::logger::LoggerLevel;
     use vmm::vmm_config::machine_config::CpuFeaturesTemplate;
     use vmm::VmmAction;
+    use vmm::vmm_config::drive::EncryptionDescription;
+    use vmm::vmm_config::drive::EncryptionAlgorithm;
 
     impl<'a> PartialEq for Error<'a> {
         fn eq(&self, other: &Error<'a>) -> bool {
@@ -661,6 +677,7 @@ mod tests {
                 }
                 (EmptyID, EmptyID) => true,
                 (InvalidID, InvalidID) => true,
+                (EncrNotImplemented, EncrNotImplemented) => true,
                 (InvalidPathMethod(path, method), InvalidPathMethod(other_path, other_method)) => {
                     path == other_path && method == other_method
                 }
@@ -788,6 +805,22 @@ mod tests {
             Some(&ContentType::json())
         );
         assert_eq!(body_to_string(response.body()), err_message);
+
+
+        response = Error::InvalidID.into();
+        let json_err_val = "API Resource IDs can only contain alphanumeric characters and underscores.";
+        let err_message = format!("{{\n  \"{}\": \"{}\"\n}}", &json_err_key, &json_err_val);
+        assert_eq!(response.status(), StatusCode::BadRequest);
+        assert_eq!(
+            response.headers().get::<ContentType>(),
+            Some(&ContentType::json())
+        );
+        assert_eq!(body_to_string(response.body()), err_message);
+
+
+
+
+
 
         let res = serde_json::from_str::<Foo>(&"foo");
         match res {
@@ -938,6 +971,62 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_encrypted_drives_req() {
+        let valid_drive_path = "/drives/id_1";
+
+        //Test case for not implemented data encryption
+        let json = r#"{
+                "drive_id": "id_1",
+                "path_on_host": "/foo/bar",
+                "is_root_device": true,
+                "is_read_only": true,
+                "encryption_description": {
+                    "iv": "0123456789012345",
+                    "key": "01234567890123456789012345678901",
+                    "aad": "42355",
+                    "algorithm": "AES256GCM"
+                 }
+              }"#;
+
+        let body: Chunk = Chunk::from(json);
+
+        let drive_desc = BlockDeviceConfig {
+            drive_id: String::from("id_1"),
+            path_on_host: PathBuf::from(String::from("/foo/bar")),
+            is_root_device: true,
+            partuuid: None,
+            is_read_only: true,
+            rate_limiter: None,
+            encryption_description: Some(EncryptionDescription {
+                iv: String::from("0123456789012345"),
+                key: String::from("01234567890123456789012345678901"),
+                aad: String::from("42355"),
+                algorithm: EncryptionAlgorithm::AES256GCM,
+            }),
+
+        };
+        assert!(parse_drives_req(valid_drive_path, Method::Put, &body) == Err(Error::EncrNotImplemented));
+
+        // Test case for missing required parameter in encryption_description
+        let json = r#"{
+                "drive_id": "id_1",
+                "path_on_host": "/foo/bar",
+                "is_root_device": true,
+                "is_read_only": true,
+                "encryption_description": {
+                    "key": "01234567890123456789012345678901",
+                    "aad":"42355",
+                    "algorithm":"AES256GCM"
+                 }
+              }"#;
+
+        let body: Chunk = Chunk::from(json);
+
+        assert!(parse_drives_req(valid_drive_path, Method::Put, &body) == Err(Error::SerdeJson(get_dummy_serde_error())));
+    }
+
+
+    #[test]
     fn test_parse_drives_req() {
         let valid_drive_path = "/drives/id_1";
         let json = "{
@@ -948,6 +1037,7 @@ mod tests {
               }";
         let body: Chunk = Chunk::from(json);
 
+
         // PUT
         let drive_desc = BlockDeviceConfig {
             drive_id: String::from("id_1"),
@@ -956,6 +1046,7 @@ mod tests {
             partuuid: None,
             is_read_only: true,
             rate_limiter: None,
+            encryption_description: None,
         };
 
         match drive_desc.into_parsed_request(Some(String::from("id_1")), Method::Put) {
@@ -1036,14 +1127,16 @@ mod tests {
 
         // Deserializing to a BlockDeviceConfig should fail when mandatory fields are missing.
         let json = "{
-                \"drive_id\": \"bar\"
+                \"drive_id\": \"bar\"\
+
               }";
+
         let expected_error = Err(Error::Generic(
             StatusCode::BadRequest,
             String::from("Required key path_on_host not present in the json."),
         ));
         let body: Chunk = Chunk::from(json);
-        assert!(parse_drives_req("/foo/bar", Method::Patch, &body) == expected_error);
+        assert!(parse_drives_req("/foo/bar2", Method::Patch, &body) == expected_error);
     }
 
     #[test]

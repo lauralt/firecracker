@@ -46,8 +46,11 @@ impl PatchDrivePayload {
             Some(fields_map) => {
                 // Check that field `drive_id` exists and its type is String.
                 PatchDrivePayload::check_field_is_string(fields_map, "drive_id")?;
-                // Check that field `drive_id` exists and its type is String.
+                // Check that field `path_on_host` exists and its type is String.
                 PatchDrivePayload::check_field_is_string(fields_map, "path_on_host")?;
+
+                // Check that field 'key' exists and its type is String.
+         //       PatchDrivePayload::check_field_is_string(fields_map, "key")?;
 
                 // Check that there are no other fields in the object.
                 if fields_map.len() > 2 {
@@ -116,6 +119,7 @@ impl IntoParsedRequest for BlockDeviceConfig {
                 "The id from the path does not match the id from the body!",
             ));
         }
+
         let (sender, receiver) = oneshot::channel();
         match method {
             Method::Put => Ok(ParsedRequest::Sync(
@@ -255,6 +259,7 @@ mod tests {
             is_read_only: true,
             partuuid: None,
             rate_limiter: None,
+            encryption_description: None,
         };
         assert!(
             &desc.into_parsed_request(Some(String::from("foo")), Method::Options)
@@ -269,6 +274,7 @@ mod tests {
             is_read_only: true,
             partuuid: None,
             rate_limiter: None,
+            encryption_description: None,
         };
         let same_desc = BlockDeviceConfig {
             drive_id: String::from("foo"),
@@ -277,6 +283,7 @@ mod tests {
             is_read_only: true,
             partuuid: None,
             rate_limiter: None,
+            encryption_description: None,
         };
         let (sender, receiver) = oneshot::channel();
         assert!(desc
