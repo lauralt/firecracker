@@ -21,6 +21,7 @@ use super::{
     ActivateError, ActivateResult, DescriptorChain, EpollHandlerPayload, Queue, VirtioDevice,
     TYPE_BLOCK, VIRTIO_MMIO_INT_VRING,
 };
+use encryption::EncryptionDescription;
 use logger::{Metric, METRICS};
 use memory_model::{GuestAddress, GuestMemory, GuestMemoryError};
 use rate_limiter::{RateLimiter, TokenType};
@@ -230,6 +231,7 @@ impl Request {
         disk_nsectors: u64,
         mem: &GuestMemory,
         disk_id: &Vec<u8>,
+        encryption_description: &Option<EncryptionDescription>,
     ) -> result::Result<u32, ExecuteError> {
         let mut top: u64 = (self.data_len as u64) / SECTOR_SIZE;
         if (self.data_len as u64) % SECTOR_SIZE != 0 {
@@ -287,6 +289,7 @@ struct BlockEpollHandler {
     queue_evt: EventFd,
     rate_limiter: RateLimiter,
     disk_image_id: Vec<u8>,
+    encryption_description: Option<EncryptionDescription>,
 }
 
 impl BlockEpollHandler {
@@ -329,6 +332,7 @@ impl BlockEpollHandler {
                         self.disk_nsectors,
                         &self.mem,
                         &self.disk_image_id,
+                        &self.encryption_description,
                     ) {
                         Ok(l) => {
                             len = l;
@@ -471,6 +475,7 @@ pub struct Block {
     config_space: Vec<u8>,
     epoll_config: EpollConfig,
     rate_limiter: Option<RateLimiter>,
+    encryption_description: Option<EncryptionDescription>,
 }
 
 pub fn build_config_space(disk_size: u64) -> Vec<u8> {
@@ -494,6 +499,7 @@ impl Block {
         is_disk_read_only: bool,
         epoll_config: EpollConfig,
         rate_limiter: Option<RateLimiter>,
+        encryption_description: Option<EncryptionDescription>,
     ) -> SysResult<Block> {
         let disk_size = disk_image.seek(SeekFrom::End(0))? as u64;
         if disk_size % SECTOR_SIZE != 0 {
@@ -518,6 +524,7 @@ impl Block {
             config_space: build_config_space(disk_size),
             epoll_config,
             rate_limiter,
+            encryption_description,
         })
     }
 }
@@ -624,6 +631,7 @@ impl VirtioDevice for Block {
                 queue_evt,
                 rate_limiter: self.rate_limiter.take().unwrap_or_default(),
                 disk_image_id,
+                encryption_description: self.encryption_description.take(),
             };
             let rate_limiter_rawfd = handler.rate_limiter.as_raw_fd();
 
@@ -678,7 +686,6 @@ mod tests {
     use std::thread;
     use std::time::Duration;
     use std::u32;
-
     use virtio::queue::tests::*;
 
     /// Will read $metric, run the code in $block, then assert metric has increased by $delta.
@@ -723,7 +730,8 @@ mod tests {
             // Rate limiting is enabled but with a high operation rate (10 million ops/s).
             let rate_limiter = RateLimiter::new(0, None, 0, 100000, None, 10).unwrap();
             DummyBlock {
-                block: Block::new(f, is_disk_read_only, epoll_config, Some(rate_limiter)).unwrap(),
+                block: Block::new(f, is_disk_read_only, epoll_config, Some(rate_limiter), None)
+                    .unwrap(),
                 epoll_raw_fd,
                 _receiver,
             }
@@ -774,6 +782,7 @@ mod tests {
                 queue_evt,
                 rate_limiter: RateLimiter::default(),
                 disk_image_id,
+                encryption_description: None,
             },
             vq,
         )

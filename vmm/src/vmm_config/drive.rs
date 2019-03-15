@@ -7,8 +7,8 @@ use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
 use std::result;
 
+use encryption::EncryptionDescription;
 use rate_limiter::RateLimiter;
-
 type Result<T> = result::Result<T, DriveError>;
 
 /// Errors associated with the operations allowed on a drive.
@@ -53,30 +53,6 @@ impl Display for DriveError {
             }
         }
     }
-}
-
-///The algorithm used for encryption
-#[derive(Debug, Deserialize, PartialEq)]
-pub enum EncryptionAlgorithm {
-    /// Advanced Encryption Standard with 256 bits key length, that uses Galois/Counter mode
-    /// of operation
-    AES256GCM,
-
-}
-
-/// Use this structure to set up the parameters used for encryption and decryption of data.
-#[derive(Debug, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct EncryptionDescription {
-    /// Initialization vector. It is an arbitrary number that is used along with
-    /// a secret key for data encryption.
-    pub iv: String,
-    /// The key used for data encryption
-    pub key: String,
-    /// Optional additional authenticated data.It is used as an integrity check.
-    pub aad: String,
-    ///The algorithm used for data encryption
-    pub algorithm: EncryptionAlgorithm,
 }
 
 /// Use this structure to set up the Block Device before booting the kernel.
@@ -342,10 +318,8 @@ mod tests {
         assert_eq!(block_devices_configs.has_read_only_root(), true);
     }
 
-
     #[test]
     fn test_add_one_root_block_device_with_invalid_path() {
-
         let mut block_devices_configs = BlockDeviceConfigs::new();
         let dummy_filename = String::from("test_create");
         let dummy_path = PathBuf::from(dummy_filename.clone());
@@ -363,7 +337,6 @@ mod tests {
         assert_eq!(
             block_devices_configs.create(dummy_block_device.clone()),
             Err(DriveError::InvalidBlockDevicePath)
-
         );
     }
 

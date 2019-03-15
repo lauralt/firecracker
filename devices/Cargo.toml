@@ -9,6 +9,7 @@ epoll = "=4.0.1"
 libc = ">=0.2.39"
 
 dumbo = { path = "../dumbo" }
+encryption = { path = "../encryption" }
 logger = { path = "../logger" }
 memory_model = { path = "../memory_model" }
 net_util = { path = "../net_util" }

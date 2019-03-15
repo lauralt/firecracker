@@ -69,6 +69,7 @@ pub fn json_fault_message<T: AsRef<str>>(msg: T) -> String {
     basic_json_body("fault_message", msg)
 }
 
+#[derive(Debug)]
 enum Error<'a> {
     // A generic error, with a given status code and message to be turned into a fault message.
     Generic(StatusCode, String),
@@ -80,8 +81,6 @@ enum Error<'a> {
     InvalidPathMethod(&'a str, Method),
     // An error occurred when deserializing the json body of a request.
     SerdeJson(serde_json::Error),
-    // Data encryption is not implemented yet.
-    EncrNotImplemented,
 }
 
 // It's convenient to turn errors into HTTP responses directly.
@@ -108,11 +107,7 @@ impl<'a> Into<hyper::Response> for Error<'a> {
             ),
             Error::SerdeJson(e) => {
                 json_response(StatusCode::BadRequest, json_fault_message(e.to_string()))
-            },
-            Error::EncrNotImplemented => json_response(
-                StatusCode::NotImplemented,
-                json_fault_message("Data encryption is not implemented yet."),
-            ),
+            }
         }
     }
 }
@@ -217,7 +212,6 @@ fn parse_drives_req<'a>(path: &'a str, method: Method, body: &Chunk) -> Result<'
         return Err(Error::EmptyID);
     };
 
-
     match path_tokens[1..].len() {
         1 if method == Method::Put => {
             METRICS.put_api_requests.drive_count.inc();
@@ -227,12 +221,6 @@ fn parse_drives_req<'a>(path: &'a str, method: Method, body: &Chunk) -> Result<'
                 Error::SerdeJson(e)
             })?;
 
-            {
-                let encryption_desc = &device_cfg.encryption_description;
-                if *encryption_desc != None {
-                    return Err(Error::EncrNotImplemented);
-                }
-            }
             Ok(device_cfg
                 .into_parsed_request(Some(id_from_path.to_string()), method)
                 .map_err(|s| {
@@ -658,14 +646,13 @@ mod tests {
     use std::path::PathBuf;
     use std::result;
 
+    use encryption::{EncryptionAlgorithm, EncryptionDescription};
     use futures::sync::oneshot;
     use hyper::header::{ContentType, Headers};
     use hyper::Body;
     use vmm::vmm_config::logger::LoggerLevel;
     use vmm::vmm_config::machine_config::CpuFeaturesTemplate;
     use vmm::VmmAction;
-    use vmm::vmm_config::drive::EncryptionDescription;
-    use vmm::vmm_config::drive::EncryptionAlgorithm;
 
     impl<'a> PartialEq for Error<'a> {
         fn eq(&self, other: &Error<'a>) -> bool {
@@ -677,7 +664,6 @@ mod tests {
                 }
                 (EmptyID, EmptyID) => true,
                 (InvalidID, InvalidID) => true,
-                (EncrNotImplemented, EncrNotImplemented) => true,
                 (InvalidPathMethod(path, method), InvalidPathMethod(other_path, other_method)) => {
                     path == other_path && method == other_method
                 }
@@ -806,9 +792,9 @@ mod tests {
         );
         assert_eq!(body_to_string(response.body()), err_message);
 
-
         response = Error::InvalidID.into();
-        let json_err_val = "API Resource IDs can only contain alphanumeric characters and underscores.";
+        let json_err_val =
+            "API Resource IDs can only contain alphanumeric characters and underscores.";
         let err_message = format!("{{\n  \"{}\": \"{}\"\n}}", &json_err_key, &json_err_val);
         assert_eq!(response.status(), StatusCode::BadRequest);
         assert_eq!(
@@ -816,11 +802,6 @@ mod tests {
             Some(&ContentType::json())
         );
         assert_eq!(body_to_string(response.body()), err_message);
-
-
-
-
-
 
         let res = serde_json::from_str::<Foo>(&"foo");
         match res {
@@ -974,7 +955,7 @@ mod tests {
     fn test_parse_encrypted_drives_req() {
         let valid_drive_path = "/drives/id_1";
 
-        //Test case for not implemented data encryption
+        // Test case for encrypted drive PUT request
         let json = r#"{
                 "drive_id": "id_1",
                 "path_on_host": "/foo/bar",
@@ -983,8 +964,8 @@ mod tests {
                 "encryption_description": {
                     "iv": "0123456789012345",
                     "key": "01234567890123456789012345678901",
-                    "aad": "42355",
-                    "algorithm": "AES256GCM"
+                    "aad":"012345",
+                    "algorithm":"AES256GCM"
                  }
               }"#;
 
@@ -998,14 +979,21 @@ mod tests {
             is_read_only: true,
             rate_limiter: None,
             encryption_description: Some(EncryptionDescription {
-                iv: String::from("0123456789012345"),
-                key: String::from("01234567890123456789012345678901"),
-                aad: String::from("42355"),
+                iv: vec![0x01, 0x23, 0x45, 0x67, 0x89, 0x01, 0x23, 0x45],
+                key: vec![
+                    0x01, 0x23, 0x45, 0x67, 0x89, 0x01, 0x23, 0x45, 0x67, 0x89, 0x01, 0x23, 0x45,
+                    0x67, 0x89, 0x01,
+                ],
+                aad: vec![0x01, 0x23, 0x45],
                 algorithm: EncryptionAlgorithm::AES256GCM,
             }),
-
         };
-        assert!(parse_drives_req(valid_drive_path, Method::Put, &body) == Err(Error::EncrNotImplemented));
+
+        let request_from_config = drive_desc
+            .into_parsed_request(Some(String::from("id_1")), Method::Put)
+            .unwrap();
+        let request_from_json = parse_drives_req(valid_drive_path, Method::Put, &body).unwrap();
+        assert!(request_from_config.eq(&request_from_json));
 
         // Test case for missing required parameter in encryption_description
         let json = r#"{
@@ -1022,9 +1010,11 @@ mod tests {
 
         let body: Chunk = Chunk::from(json);
 
-        assert!(parse_drives_req(valid_drive_path, Method::Put, &body) == Err(Error::SerdeJson(get_dummy_serde_error())));
+        assert!(
+            parse_drives_req(valid_drive_path, Method::Put, &body)
+                == Err(Error::SerdeJson(get_dummy_serde_error()))
+        );
     }
-
 
     #[test]
     fn test_parse_drives_req() {
@@ -1036,7 +1026,6 @@ mod tests {
                 \"is_read_only\": true
               }";
         let body: Chunk = Chunk::from(json);
-
 
         // PUT
         let drive_desc = BlockDeviceConfig {

@@ -11,6 +11,7 @@ extern crate serde_json;
 extern crate tokio_core;
 extern crate tokio_uds;
 
+extern crate encryption;
 extern crate fc_util;
 #[macro_use]
 extern crate logger;

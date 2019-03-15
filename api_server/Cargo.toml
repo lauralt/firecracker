@@ -14,6 +14,7 @@ tokio-core = "=0.1.12"
 tokio-uds = "=0.1.7"
 tokio-io = "=0.1.5"
 
+encryption = { path = "../encryption" }
 fc_util = { path = "../fc_util" }
 logger = { path = "../logger" }
 mmds = { path = "../mmds" }

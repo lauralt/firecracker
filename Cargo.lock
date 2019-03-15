@@ -18,6 +18,7 @@ dependencies = [
  "arch 0.1.0",
  "chrono 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "devices 0.1.0",
+ "encryption 0.1.0",
  "fc_util 0.1.0",
  "futures 0.1.18 (registry+https://github.com/rust-lang/crates.io-index)",
  "hyper 0.11.16 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -188,6 +189,7 @@ version = "0.1.0"
 dependencies = [
  "byteorder 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "dumbo 0.1.0",
+ "encryption 0.1.0",
  "epoll 4.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.47 (registry+https://github.com/rust-lang/crates.io-index)",
  "logger 0.1.0",
@@ -217,6 +219,15 @@ dependencies = [
  "logger 0.1.0",
  "mmds 0.1.0",
  "net_util 0.1.0",
+]
+
+[[package]]
+name = "encryption"
+version = "0.1.0"
+dependencies = [
+ "serde 1.0.27 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde_derive 1.0.27 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde_json 1.0.17 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -1235,6 +1246,7 @@ dependencies = [
  "chrono 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "cpuid 0.1.0",
  "devices 0.1.0",
+ "encryption 0.1.0",
  "epoll 4.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "fc_util 0.1.0",
  "futures 0.1.18 (registry+https://github.com/rust-lang/crates.io-index)",

@@ -50,7 +50,7 @@ impl PatchDrivePayload {
                 PatchDrivePayload::check_field_is_string(fields_map, "path_on_host")?;
 
                 // Check that field 'key' exists and its type is String.
-         //       PatchDrivePayload::check_field_is_string(fields_map, "key")?;
+                //       PatchDrivePayload::check_field_is_string(fields_map, "key")?;
 
                 // Check that there are no other fields in the object.
                 if fields_map.len() > 2 {

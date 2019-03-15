@@ -1,0 +1,11 @@
+[package]
+name = "encryption"
+version = "0.1.0"
+authors = ["Laura Loghin <laura.loghin@yahoo.com>"]
+
+[dependencies]
+serde = ">=1.0.27"
+serde_derive = "=1.0.27"
+
+[dev-dependencies]
+serde_json = ">=1.0.9"
