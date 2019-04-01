@@ -1,5 +1,5 @@
-[rand-read-4k]
-rw=randread
+[rand-write-4k]
+rw=randwrite
 bs=4k
 filename=/dev/vdb
 size=512M
@@ -7,4 +7,3 @@ direct=1
 ioengine=libaio
 iodepth=32
 randrepeat=0
-
