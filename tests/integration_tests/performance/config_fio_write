@@ -1,9 +1,9 @@
-[rand-write-4k]
-rw=randwrite
-bs=4k
+[fio-write]
 filename=/dev/vdb
-size=512M
-direct=1
+bs=4k
 ioengine=libaio
+rw=randwrite
+size=2G
+direct=1
 iodepth=32
 randrepeat=0
