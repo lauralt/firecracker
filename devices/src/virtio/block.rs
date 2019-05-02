@@ -21,7 +21,7 @@ use super::{
     ActivateError, ActivateResult, DescriptorChain, EpollHandlerPayload, Queue, VirtioDevice,
     TYPE_BLOCK, VIRTIO_MMIO_INT_VRING,
 };
-use encryption::EncryptionDescription;
+use encryption::*;
 use logger::{Metric, METRICS};
 use memory_model::{GuestAddress, GuestMemory, GuestMemoryError};
 use rate_limiter::{RateLimiter, TokenType};
@@ -69,6 +69,7 @@ enum Error {
 #[derive(Debug)]
 enum ExecuteError {
     BadRequest(Error),
+    Encryption(EncryptionError),
     Flush(io::Error),
     Read(GuestMemoryError),
     Seek(io::Error),
@@ -80,6 +81,7 @@ impl ExecuteError {
     fn status(&self) -> u32 {
         match self {
             &ExecuteError::BadRequest(_) => VIRTIO_BLK_S_IOERR,
+            &ExecuteError::Encryption(_) => VIRTIO_BLK_S_IOERR,
             &ExecuteError::Flush(_) => VIRTIO_BLK_S_IOERR,
             &ExecuteError::Read(_) => VIRTIO_BLK_S_IOERR,
             &ExecuteError::Seek(_) => VIRTIO_BLK_S_IOERR,
@@ -247,16 +249,76 @@ impl Request {
         disk.seek(SeekFrom::Start(self.sector << SECTOR_SHIFT))
             .map_err(ExecuteError::Seek)?;
 
+        let num_sectors = (self.data_len as u64) / SECTOR_SIZE;
+        let mut addr = &mut GuestAddress(self.data_addr.offset());
+        let bytes_left = self.data_len as u64 - num_sectors * SECTOR_SIZE;
+
         match self.request_type {
             RequestType::In => {
-                mem.read_to_memory(self.data_addr, disk, self.data_len as usize)
-                    .map_err(ExecuteError::Read)?;
+                match encryption_description {
+                    Some(_) => {
+                        let mut encr = encryption_description.clone().unwrap();
+                        for _ in 0..num_sectors {
+                            decrypt(
+                                disk,
+                                mem,
+                                &mut addr,
+                                SECTOR_SIZE as usize,
+                                encr.iv.clone(),
+                                encr.key.clone(),
+                            )
+                            .map_err(ExecuteError::Encryption)?;
+                        }
+                        if bytes_left != 0 {
+                            decrypt(
+                                disk,
+                                mem,
+                                &mut addr,
+                                bytes_left as usize,
+                                encr.iv.clone(),
+                                encr.key.clone(),
+                            )
+                            .map_err(ExecuteError::Encryption)?;
+                        }
+                    }
+                    None => mem
+                        .read_to_memory(self.data_addr, disk, self.data_len as usize)
+                        .map_err(ExecuteError::Read)?,
+                }
                 METRICS.block.read_count.add(self.data_len as usize);
                 return Ok(self.data_len);
             }
             RequestType::Out => {
-                mem.write_from_memory(self.data_addr, disk, self.data_len as usize)
-                    .map_err(ExecuteError::Write)?;
+                match encryption_description {
+                    Some(_) => {
+                        let mut encr = encryption_description.clone().unwrap();
+                        for _ in 0..num_sectors {
+                            encrypt(
+                                disk,
+                                mem,
+                                &mut addr,
+                                SECTOR_SIZE as usize,
+                                encr.iv.clone(),
+                                encr.key.clone(),
+                            )
+                            .map_err(ExecuteError::Encryption)?;
+                        }
+                        if bytes_left != 0 {
+                            encrypt(
+                                disk,
+                                mem,
+                                &mut addr,
+                                bytes_left as usize,
+                                encr.iv.clone(),
+                                encr.key.clone(),
+                            )
+                            .map_err(ExecuteError::Encryption)?;
+                        }
+                    }
+                    None => mem
+                        .write_from_memory(self.data_addr, disk, self.data_len as usize)
+                        .map_err(ExecuteError::Write)?,
+                }
                 METRICS.block.write_count.add(self.data_len as usize);
             }
             RequestType::Flush => match disk.flush() {
@@ -1574,5 +1636,291 @@ mod tests {
             assert_eq!(h.disk_image.metadata().unwrap().st_ino(), mdata.st_ino());
             assert_eq!(h.disk_image_id, id);
         }
+    }
+    #[test]
+    fn test_read_and_decrypt() {
+        let block_num_sectors = 10000;
+        //let block_size_bytes = SECTOR_SIZE * block_num_sectors;
+
+        // We create a GuestMemory object which consists of a single physical range,
+        // starting from 0 to (0x10_0000 - 1). The total size of them memory is thus
+        // 0x10_0000 = 1 MiB. We’ll use unwrap()s throughout this test instead of checking
+        // for error conditions.
+        let mem = GuestMemory::new(&[(GuestAddress(0), 0x10_0000)]).unwrap();
+
+        // We also create a temporary file that serves as the backing file for our
+        // block device.
+        let mut block_file = tempfile().unwrap();
+
+        // The file is empty as we’ve just created it. We write block_size_bytes u8s into it
+        // so it inflates to the appropriate size.
+
+        let mut sector_buf = [0u8; SECTOR_SIZE as usize];
+        for i in 0..SECTOR_SIZE as usize {
+            // We initialize the contents of sector_buf like this to have simple, predictable,
+            // and still relatively diverse pattern on our pseudo block device.
+            sector_buf[i] = i as u8;
+        }
+
+        for _ in 0..block_num_sectors {
+            block_file.write_all(sector_buf.as_ref()).unwrap();
+        }
+
+        let data_len = 0x210;
+        let data_addr = GuestAddress(0);
+
+        // Now let’s build a dummy request. When executed, this will read data_len bytes (note the
+        // hexadecimal numeric representations used throughout this example) starting with sector
+        // 2 (the third sector on the disk, because the numbering starts from 0) and write the data
+        // in the GuestMemory object starting at address 0x0. The status_addr parameter refers to
+        // and address in guest memory where the status of the operation is written, which is used
+        // by the virtio protocol. We’re providing it because it’s a required parameter, but we
+        // don’t really care about it here (we just care about it being outside of the memory
+        // range defined by [data_addr, data_addr + data_len).
+        let req = Request {
+            request_type: RequestType::In,
+            sector: 2,
+            data_addr,
+            data_len,
+            status_addr: GuestAddress(0x2000),
+        };
+
+        // Just creating a dummy value here because it’s required by
+        // Request::
+        let dummy_disk_id = Vec::new();
+        let encryption_description = Some(EncryptionDescription {
+            iv: Vec::new(),
+            key: Vec::new(),
+            aad: Vec::new(),
+            algorithm: EncryptionAlgorithm::AES256GCM,
+        });
+
+        // for reading from an unencrypted disk
+        assert!(req
+            .execute(
+                &mut block_file,
+                block_num_sectors,
+                &mem,
+                &dummy_disk_id,
+                &None
+            )
+            .is_ok());
+
+        // We use this to read the corresponding area back from memory, to check that we read we
+        // expected to.
+        let mut buf = vec![0u8; data_len as usize];
+
+        // We use as_mut here because the size of buf is precisely the size we want to read. If
+        // we needed to read less, we could have passed a sub-slice using something like
+        // &mut buf[start..end]. We use assert_eq! as a sanity check here.
+
+        assert_eq!(
+            mem.read_slice_at_addr(buf.as_mut(), data_addr).unwrap(),
+            data_len as usize
+        );
+
+        // I’ll just print the slice here, but we could have done various checks on it’s contents.
+        // To actually see the output we need to pass the --nocapture option
+        // (e.g. cargo test virtio::block::tests::test_for_laura -- --nocapture)
+        // For now, we can see the results are what we expect by visual inspection :smile:
+        println!("data from unencrypted disk {:?}", buf);
+
+        //free the memory allocated by the previous request
+        buf = vec![0u8; data_len as usize];
+        mem.write_slice_at_addr(buf.as_mut(), data_addr).unwrap();
+
+        // for reading from an encrypted disk
+        assert!(req
+            .execute(
+                &mut block_file,
+                block_num_sectors,
+                &mem,
+                &dummy_disk_id,
+                &encryption_description
+            )
+            .is_ok());
+
+        // We use this to read the corresponding area back from memory, to check that we read we
+        // expected to.
+        let mut buf = vec![0u8; data_len as usize];
+
+        // We use as_mut here because the size of buf is precisely the size we want to read. If
+        // we needed to read less, we could have passed a sub-slice using something like
+        // &mut buf[start..end]. We use assert_eq! as a sanity check here.
+
+        assert_eq!(
+            mem.read_slice_at_addr(buf.as_mut(), data_addr).unwrap(),
+            data_len as usize
+        );
+
+        // I’ll just print the slice here, but we could have done various checks on it’s contents.
+        // To actually see the output we need to pass the --nocapture option
+        // (e.g. cargo test virtio::block::tests::test_for_laura -- --nocapture)
+        // For now, we can see the results are what we expect by visual inspection :smile:
+        println!("data from encrypted disk: {:?}", buf);
+    }
+
+    #[test]
+    fn test_encrypt_and_write() {
+        let block_num_sectors = 10000;
+        let mem = GuestMemory::new(&[(GuestAddress(0), 0x10_0000)]).unwrap();
+        let mut block_file = tempfile().unwrap();
+
+        let mut sector_buf = [0u8; 10 * SECTOR_SIZE as usize];
+        for i in 0..10 * SECTOR_SIZE as usize {
+            sector_buf[i] = i as u8;
+        }
+
+        let data_len = 0x210;
+        let data_addr = GuestAddress(0);
+        mem.write_slice_at_addr(sector_buf.as_ref(), data_addr)
+            .unwrap();
+
+        let req = Request {
+            request_type: RequestType::Out,
+            sector: 2,
+            data_addr,
+            data_len,
+            status_addr: GuestAddress(0x2000),
+        };
+
+        let dummy_disk_id = Vec::new();
+        let encryption_description = Some(EncryptionDescription {
+            iv: Vec::new(),
+            key: Vec::new(),
+            aad: Vec::new(),
+            algorithm: EncryptionAlgorithm::AES256GCM,
+        });
+
+        block_file
+            .seek(SeekFrom::Start(req.sector << SECTOR_SHIFT))
+            .unwrap();
+        let mut buf = vec![0u8; 10 * SECTOR_SIZE as usize];
+        block_file.write(buf.as_mut()).unwrap();
+
+        // for writing to an unencrypted disk
+        assert!(req
+            .execute(
+                &mut block_file,
+                block_num_sectors,
+                &mem,
+                &dummy_disk_id,
+                &None
+            )
+            .is_ok());
+
+        let mut buf = vec![0u8; data_len as usize];
+        block_file
+            .seek(SeekFrom::Start(req.sector << SECTOR_SHIFT))
+            .unwrap();
+        assert_eq!(block_file.read(buf.as_mut()).unwrap(), data_len as usize);
+
+        println!("data from unencrypted disk {:?}", buf);
+
+        block_file
+            .seek(SeekFrom::Start(req.sector << SECTOR_SHIFT))
+            .unwrap();
+        buf = vec![0u8; 10 * SECTOR_SIZE as usize];
+        block_file.write(buf.as_mut()).unwrap();
+
+        // for writing to an encrypted disk
+        assert!(req
+            .execute(
+                &mut block_file,
+                block_num_sectors,
+                &mem,
+                &dummy_disk_id,
+                &encryption_description
+            )
+            .is_ok());
+
+        let mut buf = vec![0u8; data_len as usize];
+        block_file
+            .seek(SeekFrom::Start(req.sector << SECTOR_SHIFT))
+            .unwrap();
+
+        assert_eq!(block_file.read(buf.as_mut()).unwrap(), data_len as usize);
+
+        println!("data from encrypted disk {:?}", buf);
+    }
+
+    #[test]
+    fn test_write_and_read_encrypted() {
+        let block_num_sectors = 10000;
+        let mem = GuestMemory::new(&[(GuestAddress(0), 0x10_0000)]).unwrap();
+        let mut block_file = tempfile().unwrap();
+
+        let mut sector_buf = [0u8; 10 * SECTOR_SIZE as usize];
+        for i in 0..10 * SECTOR_SIZE as usize {
+            sector_buf[i] = i as u8;
+        }
+
+        let data_len = 0x210;
+        let data_addr = GuestAddress(0);
+        mem.write_slice_at_addr(sector_buf.as_ref(), data_addr)
+            .unwrap();
+
+        let mut buf_to_write = vec![0u8; data_len as usize];
+
+        assert_eq!(
+            mem.read_slice_at_addr(buf_to_write.as_mut(), data_addr)
+                .unwrap(),
+            data_len as usize
+        );
+
+        // writing to disk
+        let write_req = Request {
+            request_type: RequestType::Out,
+            sector: 2,
+            data_addr,
+            data_len,
+            status_addr: GuestAddress(0x2000),
+        };
+
+        let dummy_disk_id = Vec::new();
+        let encryption_description = Some(EncryptionDescription {
+            iv: Vec::new(),
+            key: Vec::new(),
+            aad: Vec::new(),
+            algorithm: EncryptionAlgorithm::AES256GCM,
+        });
+
+        assert!(write_req
+            .execute(
+                &mut block_file,
+                block_num_sectors,
+                &mem,
+                &dummy_disk_id,
+                &encryption_description
+            )
+            .is_ok());
+
+        // reading back from disk
+        let read_req = Request {
+            request_type: RequestType::In,
+            sector: 2,
+            data_addr,
+            data_len,
+            status_addr: GuestAddress(0x2000),
+        };
+
+        assert!(read_req
+            .execute(
+                &mut block_file,
+                block_num_sectors,
+                &mem,
+                &dummy_disk_id,
+                &encryption_description
+            )
+            .is_ok());
+
+        let mut buf_to_read = vec![0u8; data_len as usize];
+
+        assert_eq!(
+            mem.read_slice_at_addr(buf_to_read.as_mut(), data_addr)
+                .unwrap(),
+            data_len as usize
+        );
+        assert_eq!(buf_to_read, buf_to_write);
     }
 }

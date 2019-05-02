@@ -1,9 +1,27 @@
+extern crate libc;
+#[macro_use]
+extern crate logger;
+extern crate memory_model;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
 
+use memory_model::{GuestAddress, GuestMemory, GuestMemoryError};
 use serde::de::{Deserialize, Deserializer, Error};
 use serde::ser::{Serialize, Serializer};
+use std::io::{self, Read, Seek, Write};
+use std::u8::MAX as U8_MAX;
+use std::u8::MIN as U8_MIN;
+
+//mod ffi;
+
+#[derive(Debug)]
+pub enum EncryptionError {
+    /// Failure in accessing the block device
+    IOError(io::Error),
+    /// Failure in accessing the memory
+    MemoryError(GuestMemoryError),
+}
 
 ///The algorithm used for encryption
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -71,8 +89,73 @@ where
     parse_str(&s).map_err(|_| D::Error::custom("The provided string is invalid."))
 }
 
+pub fn decrypt<T: Seek + Read + Write>(
+    disk: &mut T,
+    mem: &GuestMemory,
+    data_addr: &mut GuestAddress,
+    data_len: usize,
+    iv: Vec<u8>,
+    key: Vec<u8>,
+) -> Result<usize, EncryptionError> {
+    let mut initial_buffer = vec![0u8; data_len];
+    let mut final_buffer = Vec::new();
+    let mut bytes_count: usize = 0;
+
+    while bytes_count < data_len {
+        let _ = match disk.read(&mut initial_buffer) {
+            Ok(len) => {
+                for i in 0..len {
+                    match initial_buffer[i] {
+                        U8_MAX => final_buffer.push(U8_MIN),
+                        _ => final_buffer.push(initial_buffer[i] + 1),
+                    }
+                }
+                mem.write_slice_at_addr(&final_buffer, *data_addr)
+                    .map_err(|e| EncryptionError::MemoryError(e))?;
+                *data_addr = data_addr.checked_add(len as usize).unwrap();
+                bytes_count += len as usize;
+            }
+            Err(e) => return Err(EncryptionError::IOError(e)),
+        };
+    }
+
+    Ok(bytes_count)
+}
+
+pub fn encrypt<T: Seek + Read + Write>(
+    disk: &mut T,
+    mem: &GuestMemory,
+    data_addr: &mut GuestAddress,
+    data_len: usize,
+    iv: Vec<u8>,
+    key: Vec<u8>,
+) -> Result<usize, EncryptionError> {
+    let mut initial_buffer = vec![0u8; data_len];
+    let mut final_buffer = Vec::new();
+    let mut bytes_count: usize = 0;
+    mem.read_slice_at_addr(&mut initial_buffer, *data_addr)
+        .map_err(|e| EncryptionError::MemoryError(e))?;
+    for i in 0..data_len {
+        match initial_buffer[i] {
+            U8_MIN => final_buffer.push(U8_MAX),
+            _ => final_buffer.push(initial_buffer[i] - 1),
+        }
+    }
+    while bytes_count < data_len {
+        let _ = match disk.write(&mut final_buffer) {
+            Ok(len) => {
+                bytes_count += len as usize;
+            }
+            Err(e) => return Err(EncryptionError::IOError(e)),
+        };
+    }
+    *data_addr = data_addr.checked_add(bytes_count).unwrap();
+    Ok(bytes_count)
+}
+
 #[cfg(test)]
 mod tests {
+
     extern crate serde_json;
 
     use super::*;
