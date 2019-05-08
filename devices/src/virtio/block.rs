@@ -259,26 +259,12 @@ impl Request {
                     Some(_) => {
                         let mut encr = encryption_description.clone().unwrap();
                         for _ in 0..num_sectors {
-                            decrypt(
-                                disk,
-                                mem,
-                                &mut addr,
-                                SECTOR_SIZE as usize,
-                                encr.iv.clone(),
-                                encr.key.clone(),
-                            )
-                            .map_err(ExecuteError::Encryption)?;
+                            decrypt(disk, mem, &mut addr, SECTOR_SIZE as usize, &encr)
+                                .map_err(ExecuteError::Encryption)?;
                         }
                         if bytes_left != 0 {
-                            decrypt(
-                                disk,
-                                mem,
-                                &mut addr,
-                                bytes_left as usize,
-                                encr.iv.clone(),
-                                encr.key.clone(),
-                            )
-                            .map_err(ExecuteError::Encryption)?;
+                            decrypt(disk, mem, &mut addr, bytes_left as usize, &encr)
+                                .map_err(ExecuteError::Encryption)?;
                         }
                     }
                     None => mem
@@ -293,26 +279,12 @@ impl Request {
                     Some(_) => {
                         let mut encr = encryption_description.clone().unwrap();
                         for _ in 0..num_sectors {
-                            encrypt(
-                                disk,
-                                mem,
-                                &mut addr,
-                                SECTOR_SIZE as usize,
-                                encr.iv.clone(),
-                                encr.key.clone(),
-                            )
-                            .map_err(ExecuteError::Encryption)?;
+                            encrypt(disk, mem, &mut addr, SECTOR_SIZE as usize, &encr)
+                                .map_err(ExecuteError::Encryption)?;
                         }
                         if bytes_left != 0 {
-                            encrypt(
-                                disk,
-                                mem,
-                                &mut addr,
-                                bytes_left as usize,
-                                encr.iv.clone(),
-                                encr.key.clone(),
-                            )
-                            .map_err(ExecuteError::Encryption)?;
+                            encrypt(disk, mem, &mut addr, bytes_left as usize, &encr)
+                                .map_err(ExecuteError::Encryption)?;
                         }
                     }
                     None => mem
@@ -1689,8 +1661,17 @@ mod tests {
         // Request::
         let dummy_disk_id = Vec::new();
         let encryption_description = Some(EncryptionDescription {
-            iv: Vec::new(),
-            key: Vec::new(),
+            iv: vec![
+                0x00u8, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C,
+                0x0D, 0x0E, 0x0F,
+            ],
+            key: vec![
+                0x00u8, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C,
+                0x0D, 0x0E, 0x0F, 0x00u8, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
+                0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x00u8, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
+                0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x00u8, 0x01, 0x02, 0x03,
+                0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+            ],
             aad: Vec::new(),
             algorithm: EncryptionAlgorithm::AES256GCM,
         });
@@ -1786,8 +1767,17 @@ mod tests {
 
         let dummy_disk_id = Vec::new();
         let encryption_description = Some(EncryptionDescription {
-            iv: Vec::new(),
-            key: Vec::new(),
+            iv: vec![
+                0x00u8, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C,
+                0x0D, 0x0E, 0x0F,
+            ],
+            key: vec![
+                0x00u8, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C,
+                0x0D, 0x0E, 0x0F, 0x00u8, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
+                0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x00u8, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
+                0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x00u8, 0x01, 0x02, 0x03,
+                0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+            ],
             aad: Vec::new(),
             algorithm: EncryptionAlgorithm::AES256GCM,
         });
@@ -1879,8 +1869,17 @@ mod tests {
 
         let dummy_disk_id = Vec::new();
         let encryption_description = Some(EncryptionDescription {
-            iv: Vec::new(),
-            key: Vec::new(),
+            iv: vec![
+                0x00u8, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C,
+                0x0D, 0x0E, 0x0F,
+            ],
+            key: vec![
+                0x00u8, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C,
+                0x0D, 0x0E, 0x0F, 0x00u8, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
+                0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x00u8, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
+                0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x00u8, 0x01, 0x02, 0x03,
+                0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+            ],
             aad: Vec::new(),
             algorithm: EncryptionAlgorithm::AES256GCM,
         });

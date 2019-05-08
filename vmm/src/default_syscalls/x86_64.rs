@@ -10,6 +10,7 @@ use seccomp::{
 /// Taken from the musl repo (i.e arch/x86_64/bits/syscall.h).
 pub const ALLOWED_SYSCALLS: &[i64] = &[
     libc::SYS_accept,
+    libc::SYS_brk,
     libc::SYS_clock_gettime,
     libc::SYS_close,
     libc::SYS_dup,
@@ -20,6 +21,10 @@ pub const ALLOWED_SYSCALLS: &[i64] = &[
     libc::SYS_fcntl,
     libc::SYS_fstat,
     libc::SYS_futex,
+    libc::SYS_getegid,
+    libc::SYS_geteuid,
+    libc::SYS_getgid,
+    libc::SYS_getuid,
     libc::SYS_ioctl,
     libc::SYS_lseek,
     libc::SYS_mmap,
@@ -29,6 +34,7 @@ pub const ALLOWED_SYSCALLS: &[i64] = &[
     libc::SYS_read,
     libc::SYS_readv,
     libc::SYS_rt_sigreturn,
+    libc::SYS_sigaltstack,
     libc::SYS_stat,
     libc::SYS_timerfd_create,
     libc::SYS_timerfd_settime,
@@ -127,6 +133,10 @@ pub fn default_context() -> Result<SeccompFilterContext, Error> {
                 (0, vec![SeccompRule::new(vec![], SeccompAction::Allow)]),
             ),
             (
+                libc::SYS_brk,
+                (0, vec![SeccompRule::new(vec![], SeccompAction::Allow)]),
+            ),
+            (
                 libc::SYS_clock_gettime,
                 (0, vec![SeccompRule::new(vec![], SeccompAction::Allow)]),
             ),
@@ -214,6 +224,22 @@ pub fn default_context() -> Result<SeccompFilterContext, Error> {
                         ),
                     ],
                 ),
+            ),
+            (
+                libc::SYS_getegid,
+                (0, vec![SeccompRule::new(vec![], SeccompAction::Allow)]),
+            ),
+            (
+                libc::SYS_geteuid,
+                (0, vec![SeccompRule::new(vec![], SeccompAction::Allow)]),
+            ),
+            (
+                libc::SYS_getgid,
+                (0, vec![SeccompRule::new(vec![], SeccompAction::Allow)]),
+            ),
+            (
+                libc::SYS_getuid,
+                (0, vec![SeccompRule::new(vec![], SeccompAction::Allow)]),
             ),
             (
                 libc::SYS_ioctl,
@@ -531,6 +557,10 @@ pub fn default_context() -> Result<SeccompFilterContext, Error> {
             // can return. Otherwise we get stuck in a fault loop.
             (
                 libc::SYS_rt_sigreturn,
+                (0, vec![SeccompRule::new(vec![], SeccompAction::Allow)]),
+            ),
+            (
+                libc::SYS_sigaltstack,
                 (0, vec![SeccompRule::new(vec![], SeccompAction::Allow)]),
             ),
             (
