@@ -11,6 +11,7 @@ def plot_graph(metric, io_pattern, jobs):
     iod_32_list = []
     bs_list = ['4', '32', '128', '512', '1024']
     metric_dict = {'iod_1': iod_1_list, 'iod_2': iod_2_list, 'iod_8': iod_8_list, 'iod_32': iod_32_list}
+    units_dict = {'iops': 'operatii I/O/sec', 'bw': 'kB/sec'}
     iodepth_list = ['iod_1', 'iod_2', 'iod_8', 'iod_32']
     read_op = {'randread', 'read'}
     ind = np.arange(len(bs_list))
@@ -30,7 +31,7 @@ def plot_graph(metric, io_pattern, jobs):
             if io_depth_str in metric_dict:
                 if job_results[0]['job options']['rw'] == io_pattern:
                     if metric in stats:
-                        metric_dict.get(io_depth_str).append(stats[metric])
+                        metric_dict[io_depth_str].append(stats[metric])
 
     for io_depth in iodepth_list:
         plt.bar(ind + bar_algn, metric_dict.get(io_depth)[0:5], width=0.2, align='center',
@@ -39,13 +40,13 @@ def plot_graph(metric, io_pattern, jobs):
     plt.xticks(ind, bs_list)
     plt.title('Fio results for ' + io_pattern + ' operations for different block sizes', loc='center')
     plt.xlabel('Block size [kB]')
-    plt.ylabel(metric.upper())
+    plt.ylabel(metric.upper() + " [" + units_dict.get(metric) + "]")
     plt.legend()
 
 
 io_pattern_list = ['randread', 'randwrite', 'read', 'write']
 fio_metrics = ['iops', 'bw']
-fio_results_file = 'fio_res_10loops.txt'
+fio_results_file = 'fio_results_file.txt'
 f = open(fio_results_file, 'r')
 fio_jobs = f.readlines()
 for pattern in io_pattern_list:
