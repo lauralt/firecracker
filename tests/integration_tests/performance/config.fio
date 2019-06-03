@@ -1,0 +1,9 @@
+[fio-test]
+filename=/dev/vdb
+ioengine=libaio
+size=2G
+direct=1
+loops=10
+rw=${IO_PATTERN}
+bs=${BLOCK_SIZE}
+iodepth=${IO_DEPTH}

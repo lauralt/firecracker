@@ -2128,6 +2128,7 @@ mod tests {
             partuuid: None,
             is_read_only: false,
             rate_limiter: None,
+            encryption_description: None,
         };
         assert!(vmm.insert_block_device(root_block_device.clone()).is_ok());
         assert!(vmm
@@ -2143,6 +2144,7 @@ mod tests {
             partuuid: None,
             is_read_only: true,
             rate_limiter: None,
+            encryption_description: None,
         };
         assert!(vmm.insert_block_device(root_block_device.clone()).is_ok());
         assert!(vmm
@@ -2158,6 +2160,7 @@ mod tests {
             partuuid: None,
             is_read_only: true,
             rate_limiter: None,
+            encryption_description: None,
         };
         assert!(vmm.insert_block_device(root_block_device.clone()).is_err());
 
@@ -2171,6 +2174,7 @@ mod tests {
             partuuid: None,
             is_read_only: false,
             rate_limiter: None,
+            encryption_description: None,
         };
         assert!(vmm.insert_block_device(non_root).is_ok());
 
@@ -2183,6 +2187,7 @@ mod tests {
             partuuid: None,
             is_read_only: false,
             rate_limiter: None,
+            encryption_description: None,
         };
         assert!(vmm.insert_block_device(non_root).is_err());
 
@@ -2195,6 +2200,7 @@ mod tests {
             partuuid: None,
             is_read_only: true,
             rate_limiter: None,
+            encryption_description: None,
         };
         assert!(vmm.insert_block_device(root_block_device).is_err())
     }
@@ -2582,6 +2588,7 @@ mod tests {
             partuuid: None,
             is_read_only: false,
             rate_limiter: None,
+            encryption_description: None,
         };
         // Test that creating a new block device returns the correct output.
         assert!(vmm.insert_block_device(root_block_device.clone()).is_ok());
@@ -2608,6 +2615,7 @@ mod tests {
             partuuid: Some("0eaa91a0-01".to_string()),
             is_read_only: false,
             rate_limiter: None,
+            encryption_description: None,
         };
 
         // Test that creating a new block device returns the correct output.
@@ -2637,6 +2645,7 @@ mod tests {
             partuuid: Some("0eaa91a0-01".to_string()),
             is_read_only: false,
             rate_limiter: None,
+            encryption_description: None,
         };
 
         // Test that creating a new block device returns the correct output.
@@ -2766,6 +2775,7 @@ mod tests {
             partuuid: None,
             is_read_only: false,
             rate_limiter: None,
+            encryption_description: None,
         };
         let non_root_block_device = BlockDeviceConfig {
             drive_id: scratch_id.clone(),
@@ -2774,6 +2784,7 @@ mod tests {
             partuuid: None,
             is_read_only: true,
             rate_limiter: None,
+            encryption_description: None,
         };
 
         assert!(vmm.insert_block_device(root_block_device.clone()).is_ok());
