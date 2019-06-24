@@ -1,0 +1,18 @@
+[package]
+name = "encryption"
+version = "0.1.0"
+authors = ["Laura Loghin <laura.loghin@yahoo.com>"]
+build = "build.rs"
+
+[dependencies]
+libc = "0.2"
+logger = { path = "../logger" }
+memory_model = { path = "../memory_model" }
+openssl = { version = "0.10", features = ["vendored"] }
+serde = ">=1.0.27"
+serde_derive = "=1.0.27"
+
+[dev-dependencies]
+libc = "0.2"
+openssl = { version = "0.10", features = ["vendored"] }
+serde_json = ">=1.0.9"
