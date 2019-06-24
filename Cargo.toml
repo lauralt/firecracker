@@ -8,10 +8,12 @@ chrono = ">=0.4"
 clap = "=2.27.1"
 
 api_server = { path = "api_server" }
+encryption = { path = "encryption" }
 fc_util = { path = "fc_util" }
 jailer = { path = "jailer" }
 logger = { path = "logger" }
 mmds = { path = "mmds" }
+openssl = { version = "0.10", features = ["vendored"] }
 seccomp = { path = "seccomp" }
 vmm = { path = "vmm" }
 

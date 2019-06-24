@@ -4,7 +4,7 @@ import matplotlib.gridspec as gridspec
 import numpy as np
 
 
-def plot_graph(metric, io_pattern, jobs):
+def plot_graph(metric, io_pattern, jobs, results_file):
     iod_1_list = []
     iod_2_list = []
     iod_8_list = []
@@ -37,6 +37,9 @@ def plot_graph(metric, io_pattern, jobs):
         plt.bar(ind + bar_algn, metric_dict.get(io_depth)[0:5], width=0.2, align='center',
                 label='iodepth=' + io_depth.split("_")[1])
         bar_algn += 0.2
+        for index in range(5):
+            results_file.write(io_pattern + "," + bs_list[index] + 'k,' + io_depth.split("_")[1] + ',' + metric +
+                               '=' + str(metric_dict.get(io_depth)[index]) + '\n')
     plt.xticks(ind, bs_list)
     plt.title('Fio results for ' + io_pattern + ' operations for different block sizes', loc='center')
     plt.xlabel('Block size [kB]')
@@ -47,14 +50,19 @@ def plot_graph(metric, io_pattern, jobs):
 io_pattern_list = ['randread', 'randwrite', 'read', 'write']
 fio_metrics = ['iops', 'bw']
 fio_results_file = 'fio_results_file.txt'
+fio_perf_file = 'fio_perf_file.txt'
 f = open(fio_results_file, 'r')
 fio_jobs = f.readlines()
+perf_file = open(fio_perf_file, 'w')
 for pattern in io_pattern_list:
-    plt.figure()
+    plt.figure(figsize=(12, 8))
     grid = gridspec.GridSpec(1, 2)
     i = 0
     for fio_metric in fio_metrics:
         plt.subplot(grid[0, i])
-        plot_graph(fio_metric, pattern, fio_jobs)
+        plot_graph(fio_metric, pattern, fio_jobs, perf_file)
         i += 1
-plt.show()
+    plt.savefig('graph_' + pattern + '.pdf')
+perf_file.write('Legend: io_pattern,block_size,io_depth,performance_metric\n')
+perf_file.write('Note: Unit of measurement for bw is kB/s')
+perf_file.close()

@@ -154,6 +154,10 @@ pub fn default_filter() -> Result<SeccompFilter, Error> {
                     and![Cond::new(1, Eq, FUTEX_REQUEUE_PRIVATE)?],
                 ],
             ),
+            allow_syscall(libc::SYS_getegid),
+            allow_syscall(libc::SYS_geteuid),
+            allow_syscall(libc::SYS_getgid),
+            allow_syscall(libc::SYS_getuid),
             allow_syscall(libc::SYS_getrandom),
             allow_syscall_if(libc::SYS_ioctl, create_ioctl_seccomp_rule()?),
             allow_syscall(libc::SYS_lseek),
@@ -174,6 +178,7 @@ pub fn default_filter() -> Result<SeccompFilter, Error> {
             // SYS_rt_sigreturn is needed in case a fault does occur, so that the signal handler
             // can return. Otherwise we get stuck in a fault loop.
             allow_syscall(libc::SYS_rt_sigreturn),
+            allow_syscall(libc::SYS_sigaltstack),
             allow_syscall(libc::SYS_stat),
             allow_syscall(libc::SYS_timerfd_create),
             allow_syscall(libc::SYS_timerfd_settime),

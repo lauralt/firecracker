@@ -17,6 +17,7 @@ timerfd = ">=1.0"
 
 arch = { path = "../arch" }
 devices = { path = "../devices" }
+encryption = { path = "../encryption" }
 fc_util = { path = "../fc_util" }
 kernel = { path = "../kernel" }
 kvm = { path = "../kvm" }

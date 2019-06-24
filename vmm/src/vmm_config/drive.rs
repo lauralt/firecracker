@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::result;
 
 use super::RateLimiterConfig;
+use encryption::EncryptionDescription;
 
 type Result<T> = result::Result<T, DriveError>;
 
@@ -75,6 +76,8 @@ pub struct BlockDeviceConfig {
     pub is_read_only: bool,
     /// Rate Limiter for I/O operations.
     pub rate_limiter: Option<RateLimiterConfig>,
+    /// Encryption parameters
+    pub encryption_description: Option<EncryptionDescription>,
 }
 
 impl BlockDeviceConfig {
@@ -243,6 +246,7 @@ mod tests {
                 is_read_only: self.is_read_only,
                 drive_id: self.drive_id.clone(),
                 rate_limiter: None,
+                encryption_description: None,
             }
         }
     }
@@ -266,6 +270,7 @@ mod tests {
             is_read_only: false,
             drive_id: dummy_id.clone(),
             rate_limiter: None,
+            encryption_description: None,
         };
 
         let mut block_devices_configs = BlockDeviceConfigs::new();
@@ -298,6 +303,7 @@ mod tests {
             is_read_only: true,
             drive_id: String::from("1"),
             rate_limiter: None,
+            encryption_description: None,
         };
 
         let mut block_devices_configs = BlockDeviceConfigs::new();
@@ -323,6 +329,7 @@ mod tests {
             is_read_only: false,
             drive_id: String::from("1"),
             rate_limiter: None,
+            encryption_description: None,
         };
 
         let dummy_file_2 = NamedTempFile::new().unwrap();
@@ -334,6 +341,7 @@ mod tests {
             is_read_only: false,
             drive_id: String::from("2"),
             rate_limiter: None,
+            encryption_description: None,
         };
 
         let mut block_devices_configs = BlockDeviceConfigs::new();
@@ -358,6 +366,7 @@ mod tests {
             is_read_only: false,
             drive_id: String::from("1"),
             rate_limiter: None,
+            encryption_description: None,
         };
 
         let dummy_file_2 = NamedTempFile::new().unwrap();
@@ -369,6 +378,7 @@ mod tests {
             is_read_only: false,
             drive_id: String::from("2"),
             rate_limiter: None,
+            encryption_description: None,
         };
 
         let dummy_file_3 = NamedTempFile::new().unwrap();
@@ -380,6 +390,7 @@ mod tests {
             is_read_only: false,
             drive_id: String::from("3"),
             rate_limiter: None,
+            encryption_description: None,
         };
 
         let mut block_devices_configs = BlockDeviceConfigs::new();
@@ -415,6 +426,7 @@ mod tests {
             is_read_only: false,
             drive_id: String::from("1"),
             rate_limiter: None,
+            encryption_description: None,
         };
 
         let dummy_file_2 = NamedTempFile::new().unwrap();
@@ -426,6 +438,7 @@ mod tests {
             is_read_only: false,
             drive_id: String::from("2"),
             rate_limiter: None,
+            encryption_description: None,
         };
 
         let dummy_file_3 = NamedTempFile::new().unwrap();
@@ -437,6 +450,7 @@ mod tests {
             is_read_only: false,
             drive_id: String::from("3"),
             rate_limiter: None,
+            encryption_description: None,
         };
 
         let mut block_devices_configs = BlockDeviceConfigs::new();
@@ -473,6 +487,7 @@ mod tests {
             is_read_only: false,
             drive_id: String::from("1"),
             rate_limiter: None,
+            encryption_description: None,
         };
 
         let dummy_file_2 = NamedTempFile::new().unwrap();
@@ -484,6 +499,7 @@ mod tests {
             is_read_only: false,
             drive_id: String::from("2"),
             rate_limiter: None,
+            encryption_description: None,
         };
 
         let mut block_devices_configs = BlockDeviceConfigs::new();
@@ -551,6 +567,7 @@ mod tests {
             is_read_only: false,
             drive_id: String::from("1"),
             rate_limiter: None,
+            encryption_description: None,
         };
         let root_block_device_new = BlockDeviceConfig {
             path_on_host: dummy_path_2,
@@ -559,6 +576,7 @@ mod tests {
             is_read_only: false,
             drive_id: String::from("2"),
             rate_limiter: None,
+            encryption_description: None,
         };
         let index1 = block_devices_configs
             .get_index_of_drive_id(&root_block_device_old.drive_id)

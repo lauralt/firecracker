@@ -231,8 +231,7 @@ impl Request {
         disk_nsectors: u64,
         mem: &GuestMemory,
         disk_id: &Vec<u8>,
-//        encryption_description: &Option<EncryptionDescription>,
-        encryption_context: &Option<EncryptionContext>,
+        encryption_context: &mut Option<EncryptionContext>,
     ) -> result::Result<u32, ExecuteError> {
         let mut top: u64 = u64::from(self.data_len) / SECTOR_SIZE;
         if u64::from(self.data_len) % SECTOR_SIZE != 0 {
@@ -248,10 +247,6 @@ impl Request {
         disk.seek(SeekFrom::Start(self.sector << SECTOR_SHIFT))
             .map_err(ExecuteError::Seek)?;
 
-        //   let num_sectors = (self.data_len as u64) / SECTOR_SIZE;
-        //   let mut addr = &mut GuestAddress(self.data_addr.offset());
-        //   let bytes_left = self.data_len as u64 - num_sectors * SECTOR_SIZE;
-
         match self.request_type {
             RequestType::In => {
                 match encryption_context {
@@ -262,33 +257,9 @@ impl Request {
                                 mem,
                                 self.data_addr,
                                 self.data_len as usize,
-                                //         &encr,
                                 self.sector,
                             )
                             .map_err(ExecuteError::Encryption)?;
-
-                        //                        for i in 0..num_sectors {
-                        //                            decrypt(
-                        //                                disk,
-                        //                                mem,
-                        //                                &mut addr,
-                        //                                SECTOR_SIZE as usize,
-                        //                                &encr,
-                        //                                self.sector + i,
-                        //                            )
-                        //                            .map_err(ExecuteError::Encryption)?;
-                        //                        }
-                        //                        if bytes_left != 0 {
-                        //                            decrypt(
-                        //                                disk,
-                        //                                mem,
-                        //                                &mut addr,
-                        //                                bytes_left as usize,
-                        //                                &encr,
-                        //                                self.sector + num_sectors,
-                        //                            )
-                        //                            .map_err(ExecuteError::Encryption)?;
-                        //                        }
                     }
                     None => mem
                         .read_to_memory(self.data_addr, disk, self.data_len as usize)
@@ -300,40 +271,15 @@ impl Request {
             RequestType::Out => {
                 match encryption_context {
                     Some(encr_ctxt) => {
-                     //   let encryption_context =
-                     //       EncryptionContext::new(encr.clone());
                         encr_ctxt
                             .encrypt(
                                 disk,
                                 mem,
                                 self.data_addr,
                                 self.data_len as usize,
-                                //   &encr,
                                 self.sector,
                             )
                             .map_err(ExecuteError::Encryption)?;
-                        //                        for i in 0..num_sectors {
-                        //                            encrypt(
-                        //                                disk,
-                        //                                mem,
-                        //                                &mut addr,
-                        //                                SECTOR_SIZE as usize,
-                        //                                &encr,
-                        //                                self.sector + i,
-                        //                            )
-                        //                            .map_err(ExecuteError::Encryption)?;
-                        //                        }
-                        //                        if bytes_left != 0 {
-                        //                            encrypt(
-                        //                                disk,
-                        //                                mem,
-                        //                                &mut addr,
-                        //                                bytes_left as usize,
-                        //                                &encr,
-                        //                                self.sector + num_sectors,
-                        //                            )
-                        //                            .map_err(ExecuteError::Encryption)?;
-                        //                        }
                     }
                     None => mem
                         .write_from_memory(self.data_addr, disk, self.data_len as usize)
@@ -409,23 +355,17 @@ impl BlockEpollHandler {
                             break;
                         }
                     }
-
-               //     let encr_ctxt =
-                 //       EncryptionContext::new(self.encryption_description.take());
-                    let encr_ctxt :Option<EncryptionContext> = match &self.encryption_description {
-                        Some(encr) => {
-                            Some(EncryptionContext::new(encr))
-                        },
-                        None => None,
-
-                    };
+                    let mut encryption_context: Option<EncryptionContext> =
+                        match &self.encryption_description {
+                            Some(encr) => Some(EncryptionContext::new(encr)),
+                            None => None,
+                        };
                     let status = match request.execute(
                         &mut self.disk_image,
                         self.disk_nsectors,
                         &self.mem,
                         &self.disk_image_id,
-               //         &self.encryption_description,
-                        &encr_ctxt,
+                        &mut encryption_context,
                     ) {
                         Ok(l) => {
                             len = l;
@@ -1697,7 +1637,7 @@ mod tests {
             block_file.write_all(sector_buf.as_ref()).unwrap();
         }
 
-        let data_len = 0x200;
+        let data_len = 0x400;
         let data_addr = GuestAddress(0);
 
         // Now let’s build a dummy request. When executed, this will read data_len bytes (note the
@@ -1730,6 +1670,9 @@ mod tests {
             algorithm: EncryptionAlgorithm::AES256XTS,
         });
 
+        let mut encryption_context: Option<EncryptionContext> =
+            Some(EncryptionContext::new(&encryption_description.unwrap()));
+
         // for reading from an unencrypted disk
         assert!(req
             .execute(
@@ -1737,7 +1680,7 @@ mod tests {
                 block_num_sectors,
                 &mem,
                 &dummy_disk_id,
-                &None
+                &mut None
             )
             .is_ok());
 
@@ -1771,13 +1714,13 @@ mod tests {
                 block_num_sectors,
                 &mem,
                 &dummy_disk_id,
-                &encryption_description
+                &mut encryption_context
             )
             .is_ok());
 
         // We use this to read the corresponding area back from memory, to check that we read we
         // expected to.
-        let mut buf = vec![0u8; 2 * data_len as usize];
+        let mut buf = vec![0u8; data_len as usize];
 
         // We use as_mut here because the size of buf is precisely the size we want to read. If
         // we needed to read less, we could have passed a sub-slice using something like
@@ -1785,7 +1728,7 @@ mod tests {
 
         assert_eq!(
             mem.read_slice_at_addr(buf.as_mut(), data_addr).unwrap(),
-            2 * data_len as usize
+            data_len as usize
         );
 
         // I’ll just print the slice here, but we could have done various checks on it’s contents.
@@ -1830,6 +1773,8 @@ mod tests {
             ],
             algorithm: EncryptionAlgorithm::AES256XTS,
         });
+        let mut encryption_context: Option<EncryptionContext> =
+            Some(EncryptionContext::new(&encryption_description.unwrap()));
 
         block_file
             .seek(SeekFrom::Start(req.sector << SECTOR_SHIFT))
@@ -1844,7 +1789,7 @@ mod tests {
                 block_num_sectors,
                 &mem,
                 &dummy_disk_id,
-                &None
+                &mut None
             )
             .is_ok());
 
@@ -1869,19 +1814,16 @@ mod tests {
                 block_num_sectors,
                 &mem,
                 &dummy_disk_id,
-                &encryption_description
+                &mut encryption_context
             )
             .is_ok());
 
-        let mut buf = vec![0u8; 2 * data_len as usize];
+        let mut buf = vec![0u8; data_len as usize];
         block_file
             .seek(SeekFrom::Start(req.sector << SECTOR_SHIFT))
             .unwrap();
 
-        assert_eq!(
-            block_file.read(buf.as_mut()).unwrap(),
-            2 * data_len as usize
-        );
+        assert_eq!(block_file.read(buf.as_mut()).unwrap(), data_len as usize);
 
         println!("data from encrypted disk {:?}", buf);
     }
@@ -1897,7 +1839,7 @@ mod tests {
             sector_buf[i] = i as u8;
         }
 
-        let data_len = 0x800;
+        let data_len = 0x400;
         let data_addr = GuestAddress(0);
         mem.write_slice_at_addr(sector_buf.as_ref(), data_addr)
             .unwrap();
@@ -1930,14 +1872,15 @@ mod tests {
             ],
             algorithm: EncryptionAlgorithm::AES256XTS,
         });
-
+        let mut encryption_context: Option<EncryptionContext> =
+            Some(EncryptionContext::new(&encryption_description.unwrap()));
         assert!(write_req
             .execute(
                 &mut block_file,
                 block_num_sectors,
                 &mem,
                 &dummy_disk_id,
-                &encryption_description
+                &mut encryption_context
             )
             .is_ok());
 
@@ -1956,7 +1899,7 @@ mod tests {
                 block_num_sectors,
                 &mem,
                 &dummy_disk_id,
-                &encryption_description
+                &mut encryption_context
             )
             .is_ok());
 

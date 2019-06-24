@@ -389,21 +389,14 @@ definitions:
     description:
       Defines a set of parameters used for encrypting and decrypting data
     properties:
-      iv:
-        type: string
-        description:
-          Arbitrary number used in combination with a secret key for data encryption
       key:
         type: string
         description: The key used for encryption
-      aad:
-        type: string
-        description: Optional additional authenticated data
       algorithm:
         type: string
         description: The algorithm used for encryption
         enum:
-          - AES256GCM
+          - AES256XTS
 
   Error:
     type: object

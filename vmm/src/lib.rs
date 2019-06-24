@@ -30,6 +30,7 @@ extern crate kernel;
 extern crate kvm;
 #[macro_use]
 extern crate logger;
+extern crate encryption;
 extern crate memory_model;
 extern crate net_util;
 extern crate rate_limiter;
@@ -772,6 +773,7 @@ impl Vmm {
                     drive_config.is_read_only,
                     epoll_config,
                     rate_limiter,
+                    drive_config.encryption_description.take(),
                 )
                 .map_err(StartMicrovmError::CreateBlockDevice)?,
             );
@@ -1960,6 +1962,7 @@ mod tests {
 
     use self::tempfile::NamedTempFile;
     use devices::virtio::ActivateResult;
+    use encryption::{EncryptionAlgorithm, EncryptionDescription};
     use net_util::MacAddr;
     use vmm_config::machine_config::CpuFeaturesTemplate;
     use vmm_config::{RateLimiterConfig, TokenBucketConfig};
@@ -2684,6 +2687,35 @@ mod tests {
         assert!(vmm
             .set_block_device_path("not_root".to_string(), String::from("dummy_path"))
             .is_err());
+
+        // Use Case 4: Root Block Device is attached, with encryption option
+        let root_block_device = BlockDeviceConfig {
+            drive_id: String::from("root"),
+            path_on_host: block_file.path().to_path_buf(),
+            is_root_device: true,
+            partuuid: None,
+            is_read_only: false,
+            rate_limiter: None,
+            encryption_description: Some(EncryptionDescription {
+                key: vec![
+                    0x01, 0x23, 0x45, 0x67, 0x89, 0x01, 0x23, 0x45, 0x67, 0x89, 0x01, 0x23, 0x45,
+                    0x67, 0x89, 0x01,
+                ],
+                algorithm: EncryptionAlgorithm::AES256XTS,
+            }),
+        };
+        // Test that creating a new block device returns the correct output.
+        assert!(vmm.insert_block_device(root_block_device.clone()).is_ok());
+        assert!(vmm.init_guest_memory().is_ok());
+        assert!(vmm.guest_memory.is_some());
+
+        vmm.default_kernel_config();
+
+        let guest_mem = vmm.guest_memory.clone().unwrap();
+        let mut device_manager =
+            MMIODeviceManager::new(guest_mem.clone(), arch::get_reserved_mem_addr() as u64);
+        assert!(vmm.attach_block_devices(&mut device_manager).is_ok());
+        assert!(vmm.get_kernel_cmdline_str().contains("root=/dev/vda"));
     }
 
     #[test]

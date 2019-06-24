@@ -2,7 +2,6 @@
 name = "encryption"
 version = "0.1.0"
 authors = ["Laura Loghin <laura.loghin@yahoo.com>"]
-build = "build.rs"
 
 [dependencies]
 libc = "0.2"
