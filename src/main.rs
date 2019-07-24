@@ -26,10 +26,11 @@ use std::sync::{Arc, RwLock};
 
 use api_server::{ApiServer, Error};
 use fc_util::validators::validate_instance_id;
-use logger::{Metric, LOGGER, METRICS};
+use logger::{AppInfo, Level, Metric, LOGGER, METRICS};
 use mmds::MMDS;
 use vmm::signal_handler::register_signal_handlers;
 use vmm::vmm_config::instance_info::{InstanceInfo, InstanceState};
+//use vmm::vmm_config::logger::{LoggerConfig, LoggerConfigError};
 
 const DEFAULT_API_SOCK_PATH: &str = "/tmp/firecracker.socket";
 const DEFAULT_INSTANCE_ID: &str = "anonymous-instance";
@@ -108,6 +109,18 @@ fn main() {
                 .takes_value(true)
                 .hidden(true),
         )
+        .arg(
+            Arg::with_name("logs-fifo")
+                .long("logs-fifo")
+                .takes_value(true)
+                .required(false),
+        )
+        .arg(
+            Arg::with_name("metrics-fifo")
+                .long("metrics-fifo")
+                .takes_value(true)
+                .required(false),
+        )
         .get_matches();
 
     let bind_path = cmd_arguments
@@ -142,11 +155,27 @@ fn main() {
             .expect("'start-time-cpu_us' parameter expected to be of 'u64' type.")
     });
 
+    if let Some(logs_path) = cmd_arguments.value_of("logs-fifo") {
+        LOGGER.set_level(Level::Warn);
+        LOGGER.set_include_origin(false, false);
+        LOGGER.set_include_level(false);
+        LOGGER
+            .init(
+                &AppInfo::new("Firecracker", crate_version!()),
+                DEFAULT_INSTANCE_ID,
+                String::from(logs_path),
+                String::from(cmd_arguments.value_of("metrics-fifo").unwrap()),
+                &[],
+            )
+            .expect("Could not initialize logger.");
+    }
+
     let shared_info = Arc::new(RwLock::new(InstanceInfo {
         state: InstanceState::Uninitialized,
         id: instance_id,
         vmm_version: crate_version!().to_string(),
     }));
+
     let mmds_info = MMDS.clone();
     let (to_vmm, from_api) = channel();
     let server =
@@ -156,8 +185,22 @@ fn main() {
         .get_event_fd_clone()
         .expect("Cannot clone API eventFD.");
 
-    let _vmm_thread_handle =
-        vmm::start_vmm_thread(shared_info, api_event_fd, from_api, seccomp_level);
+    //    let fifos_pair = if let Some(logs_path) = cmd_arguments.value_of("logs-fifo") {
+    //        Some((
+    //            String::from(logs_path),
+    //            String::from(cmd_arguments.value_of("metrics-fifo").unwrap()),
+    //        ))
+    //    } else {
+    //        None
+    //    };
+
+    let _vmm_thread_handle = vmm::start_vmm_thread(
+        shared_info,
+        api_event_fd,
+        from_api,
+        seccomp_level,
+        // fifos_pair,
+    );
 
     match server.bind_and_run(bind_path, start_time_us, start_time_cpu_us, seccomp_level) {
         Ok(_) => (),

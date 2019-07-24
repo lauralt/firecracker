@@ -52,8 +52,10 @@ pub enum Error {
     MissingParent(PathBuf),
     MkdirOldRoot(io::Error),
     MknodDev(io::Error, &'static str),
+    MkfifoDev(io::Error, &'static str),
     MountBind(io::Error),
     MountPropagationSlave(io::Error),
+    Move(PathBuf, PathBuf, io::Error),
     NotAFile(PathBuf),
     NumaNode(String),
     OpenDevNull(io::Error),
@@ -155,12 +157,22 @@ impl fmt::Display for Error {
                 "Failed to create {} via mknod inside the jail: {}",
                 devname, err
             ),
+            MkfifoDev(ref err, ref devname) => write!(
+                f,
+                "Failed to create {} via mkfifo inside the jail: {}",
+                devname, err
+            ),
             MountBind(ref err) => {
                 write!(f, "Failed to bind mount the jail root directory: {}", err)
             }
             MountPropagationSlave(ref err) => {
                 write!(f, "Failed to change the propagation type to slave: {}", err)
             }
+            Move(ref file, ref path, ref err) => write!(
+                f,
+                "{}",
+                format!("Failed to move {:?} to {:?}: {}", file, path, err).replace("\"", "")
+            ),
             NotAFile(ref path) => write!(
                 f,
                 "{}",
@@ -297,6 +309,34 @@ pub fn clap_app<'a, 'b>() -> App<'a, 'b> {
                 .takes_value(true)
                 .default_value("2")
                 .possible_values(&["0", "1", "2"]),
+        )
+        //        .arg(
+        //            Arg::with_name("make_fifos")
+        //                .required(true)
+        //                .long("make-fifos")
+        //                .help("User wants jailer logs and metrics to be stored in fifos.")
+        //                .conflicts_with("no_fifos")
+        //                .takes_value(false),
+        //        )
+        //        .arg(
+        //            Arg::with_name("no_fifos")
+        //                .long("no-fifos")
+        //                .help("User doesn't want jailer logs and metrics to be stored in fifos.")
+        //                .takes_value(false),
+        //        )
+        .arg(
+            Arg::with_name("logs_path")
+                .required(false)
+                .long("logs-path")
+                .help("Logs path.")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("metrics_path")
+                .required(false)
+                .long("metrics-path")
+                .help("Metrics path.")
+                .takes_value(true),
         )
 }
 
@@ -527,6 +567,14 @@ mod tests {
                 Error::MknodDev(io::Error::from_raw_os_error(42), "/dev/net/tun")
             ),
             "Failed to create /dev/net/tun via mknod inside the jail: No message of desired type \
+             (os error 42)",
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                Error::MkfifoDev(io::Error::from_raw_os_error(42), "logs.fifo")
+            ),
+            "Failed to create logs.fifo via mkfifo inside the jail: No message of desired type \
              (os error 42)",
         );
         assert_eq!(

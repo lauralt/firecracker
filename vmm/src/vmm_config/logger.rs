@@ -46,6 +46,20 @@ pub struct LoggerConfig {
     pub options: Value,
 }
 
+impl LoggerConfig {
+    /// Create a new configuration for Logger, using 2 fifos that were set via jailer parameter
+    pub fn new(log_fifo: String, metrics_fifo: String) -> Self {
+        LoggerConfig {
+            log_fifo,
+            metrics_fifo,
+            level: default_level(),
+            show_level: false,
+            show_log_origin: false,
+            options: default_log_options(),
+        }
+    }
+}
+
 fn default_level() -> LoggerLevel {
     LoggerLevel::Warning
 }

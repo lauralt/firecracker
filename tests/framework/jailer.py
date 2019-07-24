@@ -62,7 +62,7 @@ class JailerContext:
         """Cleanup this jailer context."""
         self.cleanup()
 
-    def construct_param_list(self):
+    def construct_param_list(self, make_fifos):
         """Create the list of parameters we want the jailer to start with.
 
         We want to be able to vary any parameter even the required ones as we
@@ -94,6 +94,10 @@ class JailerContext:
             jailer_param_list.extend(
                 ['--seccomp-level', str(self.seccomp_level)]
             )
+        if make_fifos:
+            jailer_param_list.append('--make-fifos')
+        else:
+            jailer_param_list.append('--no-fifos')
         return jailer_param_list
 
     def chroot_base_with_id(self):

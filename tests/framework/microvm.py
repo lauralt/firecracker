@@ -243,7 +243,7 @@ class Microvm:
         os.makedirs(self._kernel_path, exist_ok=True)
         os.makedirs(self._fsfiles_path, exist_ok=True)
 
-    def spawn(self):
+    def spawn(self, jailer_make_fifos=False):
         """Start a microVM as a daemon or in a screen session."""
         self._jailer.setup()
         self._api_socket = self._jailer.api_socket_path()
@@ -265,7 +265,8 @@ class Microvm:
         self.network = Network(self._api_socket, self._api_session)
         self.vsock = Vsock(self._api_socket, self._api_session)
 
-        jailer_param_list = self._jailer.construct_param_list()
+        jailer_param_list = self._jailer.construct_param_list(
+            jailer_make_fifos)
 
         # When the daemonize flag is on, we want to clone-exec into the
         # jailer rather than executing it via spawning a shell. Going

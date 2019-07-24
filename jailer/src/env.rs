@@ -3,6 +3,7 @@
 
 use std::ffi::CStr;
 use std::fs::{self, canonicalize, File};
+use std::io::prelude::*;
 use std::os::unix::io::IntoRawFd;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -27,6 +28,8 @@ const DEV_NULL_WITH_NUL: &[u8] = b"/dev/null\0";
 #[cfg(feature = "vsock")]
 const DEV_VHOST_VSOCK_WITH_NUL: &[u8] = b"/dev/vhost-vsock\0";
 const ROOT_PATH_WITH_NUL: &[u8] = b"/\0";
+const LOGS_PATH_WITH_NUL: &[u8] = b"/logs.fifo\0";
+const METRICS_PATH_WITH_NUL: &[u8] = b"/metrics.fifo\0";
 
 // Helper function, since we'll use libc::dup2 a bunch of times for daemonization.
 fn dup2(old_fd: libc::c_int, new_fd: libc::c_int) -> Result<()> {
@@ -54,12 +57,30 @@ pub struct Env {
     seccomp_level: u32,
     start_time_us: u64,
     start_time_cpu_us: u64,
+    //make_fifos: bool,
+    fifos_paths: Option<(PathBuf, PathBuf)>,
 }
 
 impl Env {
     pub fn new(args: ArgMatches, start_time_us: u64, start_time_cpu_us: u64) -> Result<Self> {
         // All arguments are either mandatory, or have default values, so the unwraps
         // should not fail.
+
+        let mut logs_buffer = None;
+        let fifos_paths = if let Some(logs_path) = args.value_of("logs_path") {
+            let logs_pipe_path = canonicalize(logs_path)
+                .map_err(|e| Error::Canonicalize(PathBuf::from(logs_path), e))?;
+            logs_buffer = Some(File::create(logs_pipe_path.as_path()).unwrap());
+
+            let metrics_path = args.value_of("metrics_path").unwrap();
+            let metrics_pipe_path = canonicalize(metrics_path).map_err(move |e| {
+                Error::Canonicalize(PathBuf::from(metrics_path), e)
+            })?;
+            Some((logs_pipe_path, metrics_pipe_path))
+        } else {
+            None
+        };
+
         let id = get_value(&args, "id")?;
 
         validators::validate_instance_id(id).map_err(Error::InvalidInstanceId)?;
@@ -71,7 +92,7 @@ impl Env {
 
         let exec_file = get_value(&args, "exec_file")?;
         let exec_file_path = canonicalize(exec_file)
-            .map_err(|e| Error::Canonicalize(PathBuf::from(exec_file), e))?;
+            .map_err(move |e| Error::Canonicalize(PathBuf::from(exec_file), e))?;
 
         if !exec_file_path.is_file() {
             return Err(Error::NotAFile(exec_file_path));
@@ -80,7 +101,7 @@ impl Env {
         let chroot_base = get_value(&args, "chroot_base")?;
 
         let mut chroot_dir = canonicalize(chroot_base)
-            .map_err(|e| Error::Canonicalize(PathBuf::from(chroot_base), e))?;
+            .map_err(move |e| Error::Canonicalize(PathBuf::from(chroot_base), e))?;
 
         chroot_dir.push(
             exec_file_path
@@ -114,6 +135,8 @@ impl Env {
             .parse::<u32>()
             .map_err(Error::SeccompLevel)?;
 
+        //   let make_fifos = args.is_present("make_fifos");
+
         Ok(Env {
             id: id.to_string(),
             numa_node,
@@ -126,6 +149,8 @@ impl Env {
             seccomp_level,
             start_time_us,
             start_time_cpu_us,
+            // make_fifos,
+            fifos_paths,
         })
     }
 
@@ -170,7 +195,59 @@ impl Env {
             .map_err(|e| Error::ChangeFileOwner(e, std::str::from_utf8(dev_path_str).unwrap()))
     }
 
+    //    fn mkfifo_and_own_dev(&self, dev_path_str: &'static [u8], mode: u32) -> Result<()> {
+    //        let dev_path = CStr::from_bytes_with_nul(dev_path_str)
+    //            .map_err(|_| Error::FromBytesWithNul(dev_path_str))?;
+    //
+    //        SyscallReturnCode(unsafe { libc::mkfifo(dev_path.as_ptr(), mode) })
+    //            .into_empty_result()
+    //            .map_err(|e| Error::MkfifoDev(e, std::str::from_utf8(dev_path_str).unwrap()))?;
+    //
+    //        SyscallReturnCode(unsafe { libc::chown(dev_path.as_ptr(), self.uid(), self.gid()) })
+    //            .into_empty_result()
+    //            .map_err(|e| Error::ChangeFileOwner(e, std::str::from_utf8(dev_path_str).unwrap()))
+    //    }
+
+    //    fn mvfifo_and_own_dev(
+    //        &self,
+    //        fifo_path_str: &PathBuf,
+    //        fifo_remote_path_str: &'static [u8],
+    //        fifo_remote: &'static [u8],
+    //    ) -> Result<()> {
+    //        let remote_path = CStr::from_bytes_with_nul(fifo_remote_path_str)
+    //            .map_err(|_| Error::FromBytesWithNul(fifo_remote_path_str))?;
+    //
+    //        fs::rename(fifo_path_str, &self.chroot_dir).map_err(|e| {
+    //            Error::Move(
+    //                fifo_path_str.clone(),
+    //                PathBuf::from(std::str::from_utf8(fifo_remote).unwrap()).clone(),
+    //                e,
+    //            )
+    //        })?;
+    //
+    //        SyscallReturnCode(unsafe { libc::chown(remote_path.as_ptr(), self.uid(), self.gid()) })
+    //            .into_empty_result()
+    //            .map_err(|e| {
+    //                Error::ChangeFileOwner(e, std::str::from_utf8(fifo_remote_path_str).unwrap())
+    //            })
+    //    }
+
     pub fn run(mut self, socket_file_name: &str) -> Result<()> {
+        if let Some(fifos) = &self.fifos_paths {
+            // Create 2 fifos for logs and metrics of jailer process
+            let logs_file_name = std::ffi::OsStr::new("logs.fifo");
+            self.chroot_dir.push(logs_file_name);
+            fs::rename(&fifos.0, &self.chroot_dir)
+                .map_err(|e| Error::Move(fifos.0.clone(), self.chroot_dir.clone(), e))?;
+            self.chroot_dir.pop();
+
+            let metrics_file_name = std::ffi::OsStr::new("metrics.fifo");
+            self.chroot_dir.push(metrics_file_name);
+            fs::rename(&fifos.1, &self.chroot_dir)
+                .map_err(|e| Error::Move(fifos.1.clone(), self.chroot_dir.clone(), e))?;
+            self.chroot_dir.pop();
+        }
+
         // We need to create the equivalent of /dev/net inside the jail.
         self.chroot_dir.push("dev/net");
 
@@ -267,6 +344,22 @@ impl Env {
         // Do the same for /dev/vhost_vsock with (major, minor) = (10, 241).
         self.mknod_and_own_dev(DEV_VHOST_VSOCK_WITH_NUL, 10, 241)?;
 
+        let logs_path = CStr::from_bytes_with_nul(LOGS_PATH_WITH_NUL)
+            .map_err(|_| Error::FromBytesWithNul(LOGS_PATH_WITH_NUL))?;
+        SyscallReturnCode(unsafe { libc::chown(logs_path.as_ptr(), self.uid(), self.gid()) })
+            .into_empty_result()
+            .map_err(|e| {
+                Error::ChangeFileOwner(e, std::str::from_utf8(LOGS_PATH_WITH_NUL).unwrap())
+            })?;
+
+        let metrics_path = CStr::from_bytes_with_nul(METRICS_PATH_WITH_NUL)
+            .map_err(|_| Error::FromBytesWithNul(METRICS_PATH_WITH_NUL))?;
+        SyscallReturnCode(unsafe { libc::chown(metrics_path.as_ptr(), self.uid(), self.gid()) })
+            .into_empty_result()
+            .map_err(|e| {
+                Error::ChangeFileOwner(e, std::str::from_utf8(METRICS_PATH_WITH_NUL).unwrap())
+            })?;
+
         // Change ownership of the jail root to Firecracker's UID and GID. This is necessary
         // so Firecracker can create the unix domain socket in its own jail.
         let jail_root_path = CStr::from_bytes_with_nul(ROOT_PATH_WITH_NUL)
@@ -295,26 +388,36 @@ impl Env {
                 .map_err(Error::CloseDevNullFd)?;
         }
 
-        Err(Error::Exec(
-            Command::new(chroot_exec_file)
-                .arg(format!("--id={}", self.id))
-                .arg(format!("--seccomp-level={}", self.seccomp_level))
-                .arg(format!("--start-time-us={}", self.start_time_us))
-                .arg(format!("--start-time-cpu-us={}", self.start_time_cpu_us))
-                .arg(format!("--api-sock=/{}", socket_file_name))
-                .stdin(Stdio::inherit())
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
-                .uid(self.uid())
-                .gid(self.gid())
-                .exec(),
-        ))
+        let mut command = Command::new(chroot_exec_file);
+        let init_command = command
+            .arg(format!("--id={}", self.id))
+            .arg(format!("--seccomp-level={}", self.seccomp_level))
+            .arg(format!("--start-time-us={}", self.start_time_us))
+            .arg(format!("--start-time-cpu-us={}", self.start_time_cpu_us))
+            .arg(format!("--api-sock=/{}", socket_file_name))
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .uid(self.uid())
+            .gid(self.gid());
+
+        if self.fifos_paths.is_some() {
+            init_command
+                .arg(format!("--logs-fifo={}", "/logs.fifo"))
+                .arg(format!("--metrics-fifo={}", "/metrics.fifo"));
+        }
+        Err(Error::Exec(init_command.exec()))
     }
 }
 
 #[cfg(test)]
 mod tests {
+    extern crate tempfile;
+
     use super::*;
+
+    use self::tempfile::NamedTempFile;
+    use std::env;
 
     use clap_app;
 
@@ -328,6 +431,8 @@ mod tests {
         chroot_base: &str,
         netns: Option<&str>,
         daemonize: bool,
+        //   make_fifos: bool,
+        fifos_paths: Option<(&str, &str)>,
     ) -> ArgMatches<'a> {
         let app = clap_app();
 
@@ -356,6 +461,17 @@ mod tests {
             arg_vec.push("--daemonize");
         }
 
+        //        if make_fifos {
+        //            arg_vec.push("--make-fifos");
+        //        }
+
+        if let Some(fifos_pair) = fifos_paths {
+            arg_vec.push("--logs-path");
+            arg_vec.push(fifos_pair.0);
+            arg_vec.push("--metrics-path");
+            arg_vec.push(fifos_pair.1);
+        }
+
         app.get_matches_from_safe(arg_vec).unwrap()
     }
 
@@ -368,6 +484,11 @@ mod tests {
         let gid = "1002";
         let chroot_base = "/";
         let netns = "zzzns";
+        let crt_dir = &env::current_dir().unwrap();
+        let logs_file = &NamedTempFile::new_in(crt_dir).unwrap();
+        let metrics_file = NamedTempFile::new_in(crt_dir).unwrap();
+        let logs_name = logs_file.path().file_name().unwrap().to_str().unwrap();
+        let metrics_name = metrics_file.path().file_name().unwrap().to_str().unwrap();
 
         // This should be fine.
         let good_env = Env::new(
@@ -380,6 +501,8 @@ mod tests {
                 chroot_base,
                 Some(netns),
                 true,
+                Some((logs_name, metrics_name)),
+                //   None,
             ),
             0,
             0,
@@ -396,9 +519,20 @@ mod tests {
         assert_eq!(format!("{}", good_env.uid()), uid);
         assert_eq!(good_env.netns, Some(netns.to_string()));
         assert!(good_env.daemonize);
+        // assert!(good_env.make_fifos);
 
         let another_good_env = Env::new(
-            make_args(node, id, exec_file, uid, gid, chroot_base, None, false),
+            make_args(
+                node,
+                id,
+                exec_file,
+                uid,
+                gid,
+                chroot_base,
+                None,
+                false,
+                None,
+            ),
             0,
             0,
         )
@@ -407,7 +541,17 @@ mod tests {
 
         // Not fine - invalid node.
         assert!(Env::new(
-            make_args("zzz", id, exec_file, uid, gid, chroot_base, None, true),
+            make_args(
+                "zzz",
+                id,
+                exec_file,
+                uid,
+                gid,
+                chroot_base,
+                None,
+                true,
+                None,
+            ),
             0,
             0,
         )
@@ -423,7 +567,8 @@ mod tests {
                 gid,
                 chroot_base,
                 None,
-                true
+                true,
+                None,
             ),
             0,
             0
@@ -440,7 +585,8 @@ mod tests {
                 gid,
                 chroot_base,
                 None,
-                true
+                true,
+                None,
             ),
             0,
             0
@@ -449,7 +595,17 @@ mod tests {
 
         // Not fine - invalid uid.
         assert!(Env::new(
-            make_args(node, id, exec_file, "zzz", gid, chroot_base, None, true),
+            make_args(
+                node,
+                id,
+                exec_file,
+                "zzz",
+                gid,
+                chroot_base,
+                None,
+                true,
+                None
+            ),
             0,
             0
         )
@@ -457,7 +613,17 @@ mod tests {
 
         // Not fine - invalid gid.
         assert!(Env::new(
-            make_args(node, id, exec_file, uid, "zzz", chroot_base, None, true),
+            make_args(
+                node,
+                id,
+                exec_file,
+                uid,
+                "zzz",
+                chroot_base,
+                None,
+                true,
+                None
+            ),
             0,
             0
         )

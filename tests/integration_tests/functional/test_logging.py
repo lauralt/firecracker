@@ -121,6 +121,29 @@ def test_error_logs(test_microvm_with_ssh):
     )
 
 
+def test_jailer_fifos_logs(test_microvm_with_ssh):
+    """Check output of logs when using fifos set via jailer parameter."""
+    microvm = test_microvm_with_ssh
+    microvm.spawn(True)
+    microvm.basic_config()
+
+    # Configure logging.
+    logs_fifo_path = os.path.join(microvm.jailer.chroot_path(), 'logs.fifo')
+    metrics_fifo_path = os.path.join(microvm.jailer.chroot_path(),
+                                     'metrics.fifo')
+
+    microvm.start()
+    sleep(0.5)
+
+    logs_fifo = log_tools.Fifo(logs_fifo_path, use_existing=True)
+    lines = logs_fifo.sequential_reader(1)
+    assert lines[0].startswith('Running Firecracker')
+
+    metrics_fifo = log_tools.Fifo(metrics_fifo_path, use_existing=True)
+    lines = metrics_fifo.sequential_reader(1)
+    assert lines[0].startswith('{"utc_timestamp_ms":')
+
+
 @pytest.mark.skipif(
     platform.machine() != "x86_64",
     reason="not yet supported on aarch64"

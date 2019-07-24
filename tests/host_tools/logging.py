@@ -16,13 +16,17 @@ class Fifo:
 
     path = None
 
-    def __init__(self, path):
-        """Create a new named pipe."""
+    def __init__(self, path, use_existing=False):
+        """Create a new named pipe (or use an existing one)."""
+        self.path = path
         if os.path.exists(path):
-            raise FileExistsError("Named pipe {} already exists.".format(path))
+            if not use_existing:
+                raise FileExistsError("Named pipe {} already exists."
+                                      .format(path))
+            return
+
         cmd = 'mkfifo ' + path
         run(cmd, shell=True, check=True)
-        self.path = path
 
     def sequential_reader(self, max_lines):
         """Return up to `max_lines` lines from fifo `fifo_index`.

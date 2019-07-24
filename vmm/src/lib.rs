@@ -2107,6 +2107,7 @@ pub fn start_vmm_thread(
     api_event_fd: EventFd,
     from_api: Receiver<Box<VmmAction>>,
     seccomp_level: u32,
+    //  logger_fifos: Option<(String, String)>,
 ) -> thread::JoinHandle<()> {
     thread::Builder::new()
         .name("fc_vmm".to_string())
@@ -2114,6 +2115,12 @@ pub fn start_vmm_thread(
             // If this fails, consider it fatal. Use expect().
             let mut vmm = Vmm::new(api_shared_info, api_event_fd, from_api, seccomp_level)
                 .expect("Cannot create VMM");
+
+            //            if let Some(fifos) = logger_fifos {
+            //                let logger_config = LoggerConfig::new(fifos.0, fifos.1);
+            //                vmm.init_logger(logger_config)
+            //                    .expect("Cannot initialize logger");
+            //            }
             match vmm.run_control() {
                 Ok(()) => {
                     info!("Gracefully terminated VMM control loop");
@@ -3197,6 +3204,17 @@ mod tests {
                 assert!(line.contains("Guest-boot-time ="));
             }
         }
+    }
+
+    #[test]
+    fn test_default_init_logger() {
+        let desc = LoggerConfig::new(String::from("logs.fifo"), String::from("metrics.fifo"));
+        assert_eq!(desc.log_fifo, String::from("logs.fifo"));
+        assert_eq!(desc.metrics_fifo, String::from("metrics.fifo"));
+        assert_eq!(desc.level, LoggerLevel::Warning);
+        assert_eq!(desc.show_level, false);
+        assert_eq!(desc.show_log_origin, false);
+        assert_eq!(desc.options, Value::Array(vec![]));
     }
 
     #[cfg(target_arch = "x86_64")]
