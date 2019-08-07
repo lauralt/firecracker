@@ -298,6 +298,12 @@ pub fn clap_app<'a, 'b>() -> App<'a, 'b> {
                 .default_value("2")
                 .possible_values(&["0", "1", "2"]),
         )
+        .arg(
+            Arg::with_name("vmm-config")
+                .long("vmm-config")
+                .takes_value(true)
+                .required(false),
+        )
 }
 
 fn sanitize_process() {

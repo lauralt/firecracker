@@ -108,6 +108,12 @@ fn main() {
                 .takes_value(true)
                 .hidden(true),
         )
+        .arg(
+            Arg::with_name("vmm-config")
+                .long("vmm-config")
+                .takes_value(true)
+                .required(false),
+        )
         .get_matches();
 
     let bind_path = cmd_arguments
@@ -142,6 +148,10 @@ fn main() {
             .expect("'start-time-cpu_us' parameter expected to be of 'u64' type.")
     });
 
+    let vmm_config_json = cmd_arguments
+        .value_of("vmm-config")
+        .map(|s| String::from(s));
+
     let shared_info = Arc::new(RwLock::new(InstanceInfo {
         state: InstanceState::Uninitialized,
         id: instance_id,
@@ -156,8 +166,13 @@ fn main() {
         .get_event_fd_clone()
         .expect("Cannot clone API eventFD.");
 
-    let _vmm_thread_handle =
-        vmm::start_vmm_thread(shared_info, api_event_fd, from_api, seccomp_level);
+    let _vmm_thread_handle = vmm::start_vmm_thread(
+        shared_info,
+        api_event_fd,
+        from_api,
+        seccomp_level,
+        vmm_config_json,
+    );
 
     match server.bind_and_run(bind_path, start_time_us, start_time_cpu_us, seccomp_level) {
         Ok(_) => (),

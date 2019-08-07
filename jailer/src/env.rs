@@ -54,6 +54,7 @@ pub struct Env {
     seccomp_level: u32,
     start_time_us: u64,
     start_time_cpu_us: u64,
+    config_json: Option<String>,
 }
 
 impl Env {
@@ -114,6 +115,11 @@ impl Env {
             .parse::<u32>()
             .map_err(Error::SeccompLevel)?;
 
+        let config_json = match args.value_of("vmm-config") {
+            Some(s) => Some(String::from(s)),
+            None => None,
+        };
+
         Ok(Env {
             id: id.to_string(),
             numa_node,
@@ -126,6 +132,7 @@ impl Env {
             seccomp_level,
             start_time_us,
             start_time_cpu_us,
+            config_json,
         })
     }
 
@@ -295,20 +302,23 @@ impl Env {
                 .map_err(Error::CloseDevNullFd)?;
         }
 
-        Err(Error::Exec(
-            Command::new(chroot_exec_file)
-                .arg(format!("--id={}", self.id))
-                .arg(format!("--seccomp-level={}", self.seccomp_level))
-                .arg(format!("--start-time-us={}", self.start_time_us))
-                .arg(format!("--start-time-cpu-us={}", self.start_time_cpu_us))
-                .arg(format!("--api-sock=/{}", socket_file_name))
-                .stdin(Stdio::inherit())
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
-                .uid(self.uid())
-                .gid(self.gid())
-                .exec(),
-        ))
+        let mut command = Command::new(chroot_exec_file);
+        let init_command = command
+            .arg(format!("--id={}", self.id))
+            .arg(format!("--seccomp-level={}", self.seccomp_level))
+            .arg(format!("--start-time-us={}", self.start_time_us))
+            .arg(format!("--start-time-cpu-us={}", self.start_time_cpu_us))
+            .arg(format!("--api-sock=/{}", socket_file_name))
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .uid(self.uid())
+            .gid(self.gid());
+
+        if let Some(json) = self.config_json {
+            init_command.arg(format!("--vmm-config={}", json));
+        }
+        Err(Error::Exec(init_command.exec()))
     }
 }
 
@@ -328,6 +338,7 @@ mod tests {
         chroot_base: &str,
         netns: Option<&str>,
         daemonize: bool,
+        config_json: Option<&str>,
     ) -> ArgMatches<'a> {
         let app = clap_app();
 
@@ -356,6 +367,11 @@ mod tests {
             arg_vec.push("--daemonize");
         }
 
+        if let Some(json) = config_json {
+            arg_vec.push("--vmm-config");
+            arg_vec.push(json);
+        }
+
         app.get_matches_from_safe(arg_vec).unwrap()
     }
 
@@ -380,6 +396,7 @@ mod tests {
                 chroot_base,
                 Some(netns),
                 true,
+                None,
             ),
             0,
             0,
@@ -398,7 +415,17 @@ mod tests {
         assert!(good_env.daemonize);
 
         let another_good_env = Env::new(
-            make_args(node, id, exec_file, uid, gid, chroot_base, None, false),
+            make_args(
+                node,
+                id,
+                exec_file,
+                uid,
+                gid,
+                chroot_base,
+                None,
+                false,
+                None,
+            ),
             0,
             0,
         )
@@ -407,7 +434,17 @@ mod tests {
 
         // Not fine - invalid node.
         assert!(Env::new(
-            make_args("zzz", id, exec_file, uid, gid, chroot_base, None, true),
+            make_args(
+                "zzz",
+                id,
+                exec_file,
+                uid,
+                gid,
+                chroot_base,
+                None,
+                true,
+                None
+            ),
             0,
             0,
         )
@@ -423,7 +460,8 @@ mod tests {
                 gid,
                 chroot_base,
                 None,
-                true
+                true,
+                None
             ),
             0,
             0
@@ -440,7 +478,8 @@ mod tests {
                 gid,
                 chroot_base,
                 None,
-                true
+                true,
+                None
             ),
             0,
             0
@@ -449,7 +488,17 @@ mod tests {
 
         // Not fine - invalid uid.
         assert!(Env::new(
-            make_args(node, id, exec_file, "zzz", gid, chroot_base, None, true),
+            make_args(
+                node,
+                id,
+                exec_file,
+                "zzz",
+                gid,
+                chroot_base,
+                None,
+                true,
+                None
+            ),
             0,
             0
         )
@@ -457,7 +506,17 @@ mod tests {
 
         // Not fine - invalid gid.
         assert!(Env::new(
-            make_args(node, id, exec_file, uid, "zzz", chroot_base, None, true),
+            make_args(
+                node,
+                id,
+                exec_file,
+                uid,
+                "zzz",
+                chroot_base,
+                None,
+                true,
+                None
+            ),
             0,
             0
         )
