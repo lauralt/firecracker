@@ -14,6 +14,7 @@ jailer --id <id> \
        [--netns <netns>]
        [--daemonize]
        [--seccomp-level <level>]
+       [--vmm-config <vmm_config>]
 ```
 
 - `id` is the unique VM identification string, which may contain alphanumeric
@@ -38,6 +39,8 @@ jailer --id <id> \
     Firecracker.
   - 2 (default): advanced filtering. This adds further checks on some of the
     parameters of the allowed syscalls.
+- `vmm_config` represents the json that can be used for configuring the 
+    microVM without using API requests.
 
 ## Jailer Operation
 
@@ -82,12 +85,14 @@ After starting, the Jailer goes through the following operations:
 - Drop privileges via setting the provided `uid` and `gid`.
 - Exec into `<exec_file_name> --id=<id> --api-sock=/api.socket
   --seccomp-level=<level> --start-time-us=<opaque>
-  --start-time-cpu-us=<opaque>`.
+  --start-time-cpu-us=<opaque> [--vmm-config <vmm_config>]`.
   Where:
   - `id`: (`string`) - The `id` argument provided to jailer.
   - `level`: (`number`) - the `--seccomp-level` argument provided to jailer.
   - `opaque`: (`number`) time calculated by the jailer that it spent doing
      its work.
+  - `vmm_config`: (`string`) - optional argument that can be used for 
+     configuring a microVM without sending API requests.
 
 ## Example Run and Notes
 
@@ -194,6 +199,10 @@ Finally, the jailer switches the `uid` to `123`, and `gid` to `100`, and execs
 We can now use the socket at
 `/srv/jailer/firecracker/551e7604-e35c-42b3-b825-416853441234/root/api.socket`
 to interact with the VM.
+
+In case we want to configure the VM without using the API socket, we can also 
+pass the `vmm-config` parameter, as mentioned in the previous section 
+(`Jailer Operation`).
 
 ### Observations
 

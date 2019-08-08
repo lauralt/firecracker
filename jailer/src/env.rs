@@ -115,10 +115,7 @@ impl Env {
             .parse::<u32>()
             .map_err(Error::SeccompLevel)?;
 
-        let config_json = match args.value_of("vmm-config") {
-            Some(s) => Some(String::from(s)),
-            None => None,
-        };
+        let config_json = args.value_of("vmm-config").map(String::from);
 
         Ok(Env {
             id: id.to_string(),
@@ -303,7 +300,7 @@ impl Env {
         }
 
         let mut command = Command::new(chroot_exec_file);
-        let init_command = command
+        command
             .arg(format!("--id={}", self.id))
             .arg(format!("--seccomp-level={}", self.seccomp_level))
             .arg(format!("--start-time-us={}", self.start_time_us))
@@ -316,9 +313,9 @@ impl Env {
             .gid(self.gid());
 
         if let Some(json) = self.config_json {
-            init_command.arg(format!("--vmm-config={}", json));
+            command.arg(format!("--vmm-config={}", json));
         }
-        Err(Error::Exec(init_command.exec()))
+        Err(Error::Exec(command.exec()))
     }
 }
 
@@ -384,6 +381,25 @@ mod tests {
         let gid = "1002";
         let chroot_base = "/";
         let netns = "zzzns";
+        let config_json = r#"{
+           "boot-source":{
+               "kernel_image_path": "vmlinux.bin",
+               "boot_args": "console=ttyS0 reboot=k panic=1 pci=off"
+           },
+           "drives": [
+               {
+                   "drive_id": "rootfs",
+                   "path_on_host": "xenial.rootfs.ext4",
+                   "is_root_device": true,
+                   "is_read_only": false
+               }
+           ],
+           "machine-config":{
+               "vcpu_count": 2,
+               "mem_size_mib": 1024,
+               "ht_enabled": false
+           }
+       }"#;
 
         // This should be fine.
         let good_env = Env::new(
@@ -396,7 +412,7 @@ mod tests {
                 chroot_base,
                 Some(netns),
                 true,
-                None,
+                Some(config_json),
             ),
             0,
             0,
@@ -413,6 +429,7 @@ mod tests {
         assert_eq!(format!("{}", good_env.uid()), uid);
         assert_eq!(good_env.netns, Some(netns.to_string()));
         assert!(good_env.daemonize);
+        assert_eq!(good_env.config_json, Some(config_json.to_string()));
 
         let another_good_env = Env::new(
             make_args(

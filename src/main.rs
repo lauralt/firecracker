@@ -148,9 +148,7 @@ fn main() {
             .expect("'start-time-cpu_us' parameter expected to be of 'u64' type.")
     });
 
-    let vmm_config_json = cmd_arguments
-        .value_of("vmm-config")
-        .map(|s| String::from(s));
+    let vmm_config_json = cmd_arguments.value_of("vmm-config").map(String::from);
 
     let shared_info = Arc::new(RwLock::new(InstanceInfo {
         state: InstanceState::Uninitialized,

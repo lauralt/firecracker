@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- New parameter, `vmm-config`, which represents a JSON that can be used for configuring 
+  a microVM without sending any API requests.
+
 ### Fixed
 
 - Corrected firecracker-experimental.yaml indentation issues that

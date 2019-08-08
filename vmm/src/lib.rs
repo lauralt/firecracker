@@ -11,7 +11,6 @@
 #![deny(missing_docs)]
 extern crate epoll;
 extern crate futures;
-extern crate hyper;
 extern crate kvm_bindings;
 extern crate kvm_ioctls;
 extern crate libc;
@@ -45,7 +44,6 @@ pub mod vmm_config;
 mod vstate;
 
 use futures::sync::oneshot;
-use hyper::Chunk;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::fs::{metadata, File, OpenOptions};
@@ -764,13 +762,19 @@ struct KernelConfig {
 /// Used for configuring a vmm from one single json passed to the Firecracker process.
 #[derive(Deserialize)]
 pub struct VmmConfig {
+    #[serde(rename = "boot-source")]
     boot_source: BootSourceConfig,
+    #[serde(rename = "drives")]
     block_devices: Vec<BlockDeviceConfig>,
-    net_devices: Option<Vec<NetworkInterfaceConfig>>,
+    #[serde(rename = "network-interfaces", default)]
+    net_devices: Vec<NetworkInterfaceConfig>,
+    #[serde(rename = "logger")]
     logger: Option<LoggerConfig>,
+    #[serde(rename = "machine-config")]
     machine_config: Option<VmConfig>,
     #[cfg(feature = "vsock")]
-    vsock_devices: Option<Vec<VsockDeviceConfig>>,
+    #[serde(rename = "vsocks", default)]
+    vsock_devices: Vec<VsockDeviceConfig>,
 }
 
 struct Vmm {
@@ -2040,14 +2044,11 @@ impl Vmm {
         &mut self,
         config_json: String,
     ) -> std::result::Result<(), VmmActionError> {
-        let body: Chunk = Chunk::from(config_json);
-        let vmm_config = match serde_json::from_slice::<VmmConfig>(&body) {
-            Ok(config) => config,
-            Err(e) => {
+        let vmm_config = serde_json::from_slice::<VmmConfig>(config_json.as_bytes())
+            .unwrap_or_else(|e| {
                 error!("Invalid json: {}", e);
                 process::exit(i32::from(FC_EXIT_CODE_INVALID_JSON));
-            }
-        };
+            });
 
         if let Some(logger) = vmm_config.logger {
             self.init_logger(logger)?;
@@ -2059,23 +2060,16 @@ impl Vmm {
         for drive_config in vmm_config.block_devices.into_iter() {
             self.insert_block_device(drive_config)?;
         }
-        if let Some(net_devices) = vmm_config.net_devices {
-            for net_config in net_devices.into_iter() {
-                self.insert_net_device(net_config)?;
-            }
+        for net_config in vmm_config.net_devices.into_iter() {
+            self.insert_net_device(net_config)?;
         }
         if let Some(machine_config) = vmm_config.machine_config {
             self.set_vm_configuration(machine_config)?;
         }
         #[cfg(feature = "vsock")]
-        {
-            if let Some(vsock_devices) = vmm_config.vsock_devices {
-                for vsock_config in vsock_devices.into_iter() {
-                    self.insert_vsock_device(vsock_config)?;
-                }
-            }
+        for vsock_config in vmm_config.vsock_devices.into_iter() {
+            self.insert_vsock_device(vsock_config)?;
         }
-        self.start_microvm()?;
         Ok(())
     }
 }
@@ -2134,6 +2128,8 @@ impl PartialEq for VmmAction {
 ///                     number) or 2 (filter by syscall number and argument values).
 /// * `kvm_fd` - Provides the option of supplying an already existing raw file descriptor
 ///              associated with `/dev/kvm`.
+/// * `config_json` - Optional parameter that can be used to configure the guest machine without
+///                   using the API socket.
 pub fn start_vmm_thread(
     api_shared_info: Arc<RwLock<InstanceInfo>>,
     api_event_fd: EventFd,
@@ -2149,17 +2145,20 @@ pub fn start_vmm_thread(
                 .expect("Cannot create VMM");
 
             if let Some(json) = config_json {
-                match vmm.configure_from_json(json) {
-                    Ok(()) => {
-                        info!("Successfully configured VMM from one single json");
-                    }
-                    Err(e) => {
-                        error!(
-                            "Setting configuration for VMM from one single json failed: {}",
-                            e
-                        );
-                        process::exit(i32::from(FC_EXIT_CODE_BAD_CONFIGURATION));
-                    }
+                if let Err(e) = vmm.configure_from_json(json) {
+                    error!(
+                        "Setting configuration for VMM from one single json failed: {}",
+                        e
+                    );
+                    process::exit(i32::from(FC_EXIT_CODE_BAD_CONFIGURATION));
+                } else if let Err(e) = vmm.start_microvm() {
+                    error!(
+                        "Starting microvm that was configured from one single json failed: {}",
+                        e
+                    );
+                    process::exit(i32::from(FC_EXIT_CODE_UNEXPECTED_ERROR));
+                } else {
+                    info!("Successfully started microvm that was configured from one single json");
                 }
             }
 
@@ -3414,6 +3413,244 @@ mod tests {
             .get_device_info()
             .get(&(DeviceType::Serial, "uart".to_string()))
             .is_some());
+    }
+
+    #[test]
+    fn test_configure_vmm_from_json() {
+        let mut vmm = create_vmm_object(InstanceState::Uninitialized);
+
+        let kernel_file = NamedTempFile::new().unwrap();
+        let rootfs_file = NamedTempFile::new().unwrap();
+
+        // We will test different scenarios with invalid resources configuration and
+        // check the expected errors. We include configuration for the kernel and rootfs
+        // in every json because they are mandatory fields. If we don't configure
+        // these resources, it is considered an invalid json and the test will crash.
+
+        // Invalid kernel path.
+        let mut json = format!(
+            r#"{{
+                    "boot-source": {{
+                        "kernel_image_path": "/invalid/path",
+                        "boot_args": "console=ttyS0 reboot=k panic=1 pci=off"
+                    }},
+                    "drives": [
+                        {{
+                            "drive_id": "rootfs",
+                            "path_on_host": "{}",
+                            "is_root_device": true,
+                            "is_read_only": false
+                        }}
+                    ]
+            }}"#,
+            rootfs_file.path().to_str().unwrap()
+        );
+
+        match vmm.configure_from_json(json) {
+            Err(VmmActionError::BootSource(
+                ErrorKind::User,
+                BootSourceConfigError::InvalidKernelPath,
+            )) => (),
+            _ => unreachable!(),
+        }
+
+        // Invalid rootfs path.
+        json = format!(
+            r#"{{
+                    "boot-source": {{
+                        "kernel_image_path": "{}",
+                        "boot_args": "console=ttyS0 reboot=k panic=1 pci=off"
+                    }},
+                    "drives": [
+                        {{
+                            "drive_id": "rootfs",
+                            "path_on_host": "/invalid/path",
+                            "is_root_device": true,
+                            "is_read_only": false
+                        }}
+                    ]
+            }}"#,
+            kernel_file.path().to_str().unwrap()
+        );
+
+        match vmm.configure_from_json(json) {
+            Err(VmmActionError::DriveConfig(
+                ErrorKind::User,
+                DriveError::InvalidBlockDevicePath,
+            )) => (),
+            _ => unreachable!(),
+        }
+
+        // Invalid vCPU number.
+        json = format!(
+            r#"{{
+                    "boot-source": {{
+                        "kernel_image_path": "{}",
+                        "boot_args": "console=ttyS0 reboot=k panic=1 pci=off"
+                    }},
+                    "drives": [
+                        {{
+                            "drive_id": "rootfs",
+                            "path_on_host": "{}",
+                            "is_root_device": true,
+                            "is_read_only": false
+                        }}
+                    ],
+                    "machine-config": {{
+                        "vcpu_count": 0,
+                        "mem_size_mib": 1024,
+                        "ht_enabled": false
+                    }}
+            }}"#,
+            kernel_file.path().to_str().unwrap(),
+            rootfs_file.path().to_str().unwrap()
+        );
+
+        match vmm.configure_from_json(json) {
+            Err(VmmActionError::MachineConfig(
+                ErrorKind::User,
+                VmConfigError::InvalidVcpuCount,
+            )) => (),
+            _ => unreachable!(),
+        }
+
+        // Invalid memory size.
+        json = format!(
+            r#"{{
+                    "boot-source": {{
+                        "kernel_image_path": "{}",
+                        "boot_args": "console=ttyS0 reboot=k panic=1 pci=off"
+                    }},
+                    "drives": [
+                        {{
+                            "drive_id": "rootfs",
+                            "path_on_host": "{}",
+                            "is_root_device": true,
+                            "is_read_only": false
+                        }}
+                    ],
+                    "machine-config": {{
+                        "vcpu_count": 2,
+                        "mem_size_mib": 0,
+                        "ht_enabled": false
+                    }}
+            }}"#,
+            kernel_file.path().to_str().unwrap(),
+            rootfs_file.path().to_str().unwrap()
+        );
+
+        match vmm.configure_from_json(json) {
+            Err(VmmActionError::MachineConfig(
+                ErrorKind::User,
+                VmConfigError::InvalidMemorySize,
+            )) => (),
+            _ => unreachable!(),
+        }
+
+        // Invalid path for logger pipe.
+        json = format!(
+            r#"{{
+                    "boot-source": {{
+                        "kernel_image_path": "{}",
+                        "boot_args": "console=ttyS0 reboot=k panic=1 pci=off"
+                    }},
+                    "drives": [
+                        {{
+                            "drive_id": "rootfs",
+                            "path_on_host": "{}",
+                            "is_root_device": true,
+                            "is_read_only": false
+                        }}
+                    ],
+                    "logger": {{
+	                    "log_fifo": "/invalid/path",
+                        "metrics_fifo": "metrics.fifo"
+                    }}
+            }}"#,
+            kernel_file.path().to_str().unwrap(),
+            rootfs_file.path().to_str().unwrap()
+        );
+
+        match vmm.configure_from_json(json) {
+            Err(VmmActionError::Logger(
+                ErrorKind::User,
+                LoggerConfigError::InitializationFailure { .. },
+            )) => (),
+            _ => unreachable!(),
+        }
+
+        // Reuse of a host name.
+        json = format!(
+            r#"{{
+                    "boot-source": {{
+                        "kernel_image_path": "{}",
+                        "boot_args": "console=ttyS0 reboot=k panic=1 pci=off"
+                    }},
+                    "drives": [
+                        {{
+                            "drive_id": "rootfs",
+                            "path_on_host": "{}",
+                            "is_root_device": true,
+                            "is_read_only": false
+                        }}
+                    ],
+                    "network-interfaces": [
+                        {{
+                            "iface_id": "netif1",
+                            "host_dev_name": "hostname7"
+                        }},
+                        {{
+                            "iface_id": "netif2",
+                            "host_dev_name": "hostname7"
+                        }}
+                    ]
+            }}"#,
+            kernel_file.path().to_str().unwrap(),
+            rootfs_file.path().to_str().unwrap()
+        );
+
+        match vmm.configure_from_json(json) {
+            Err(VmmActionError::NetworkConfig(
+                ErrorKind::User,
+                NetworkInterfaceError::HostDeviceNameInUse { .. },
+            )) => (),
+            _ => unreachable!(),
+        }
+
+        // Let's try now passing a valid configuration. We won't include any logger
+        // configuration because the logger was already initialized in another test
+        // of this module and the reinitialization of it will cause crashing.
+        json = format!(
+            r#"{{
+                    "boot-source": {{
+                        "kernel_image_path": "{}",
+                        "boot_args": "console=ttyS0 reboot=k panic=1 pci=off"
+                    }},
+                    "drives": [
+                        {{
+                            "drive_id": "rootfs",
+                            "path_on_host": "{}",
+                            "is_root_device": true,
+                            "is_read_only": false
+                        }}
+                    ],
+                    "network-interfaces": [
+                        {{
+                            "iface_id": "netif",
+                            "host_dev_name": "hostname8"
+                        }}
+                    ],
+                     "machine-config": {{
+                            "vcpu_count": 2,
+                            "mem_size_mib": 1024,
+                            "ht_enabled": false
+                     }}
+            }}"#,
+            kernel_file.path().to_str().unwrap(),
+            rootfs_file.path().to_str().unwrap()
+        );
+
+        assert!(vmm.configure_from_json(json).is_ok());
     }
 
     // Helper function to get ErrorKind of error.
