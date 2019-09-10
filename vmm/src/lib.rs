@@ -781,6 +781,7 @@ struct Vmm {
     kvm: KvmContext,
 
     vm_config: VmConfig,
+  //  #[cfg(feature = "api")]
     shared_info: Arc<RwLock<InstanceInfo>>,
 
     // Guest VM core resources.
@@ -805,7 +806,9 @@ struct Vmm {
     epoll_context: EpollContext,
 
     // API resources.
+    #[cfg(feature = "api")]
     api_event_fd: EventFd,
+    #[cfg(feature = "api")]
     from_api: Receiver<Box<VmmAction>>,
 
     write_metrics_event_fd: TimerFd,
@@ -815,6 +818,7 @@ struct Vmm {
 }
 
 impl Vmm {
+    #[cfg(feature = "api")]
     fn new(
         api_shared_info: Arc<RwLock<InstanceInfo>>,
         api_event_fd: EventFd,
@@ -860,6 +864,46 @@ impl Vmm {
             epoll_context,
             api_event_fd,
             from_api,
+            write_metrics_event_fd,
+            seccomp_level,
+        })
+    }
+
+    #[cfg(not(feature = "api"))]
+    fn new(
+        api_shared_info: Arc<RwLock<InstanceInfo>>,
+        seccomp_level: u32,
+    ) -> Result<Self> {
+        let block_device_configs = BlockDeviceConfigs::new();
+        let kvm = KvmContext::new()?;
+        let vm = Vm::new(kvm.fd()).map_err(Error::Vm)?;
+        let mut epoll_context = EpollContext::new()?;
+
+        let write_metrics_event_fd =
+            TimerFd::new_custom(ClockId::Monotonic, true, true).map_err(Error::TimerFd)?;
+        epoll_context
+            .add_event(
+                // non-blocking & close on exec
+                &write_metrics_event_fd,
+                EpollDispatch::WriteMetrics,
+            )
+            .expect("Cannot add write metrics TimerFd to epoll.");
+        Ok(Vmm {
+            kvm,
+            vm_config: VmConfig::default(),
+            shared_info: api_shared_info,
+            guest_memory: None,
+            kernel_config: None,
+            vcpus_handles: vec![],
+            exit_evt: None,
+            vm,
+            mmio_device_manager: None,
+            legacy_device_manager: LegacyDeviceManager::new().map_err(Error::CreateLegacyDevice)?,
+            block_device_configs,
+            network_interface_configs: NetworkInterfaceConfigs::new(),
+            #[cfg(feature = "vsock")]
+            vsock_device_configs: VsockDeviceConfigs::new(),
+            epoll_context,
             write_metrics_event_fd,
             seccomp_level,
         })
@@ -1538,6 +1582,7 @@ impl Vmm {
         self.shared_info.read().expect(error_string).state != InstanceState::Uninitialized
     }
 
+    #[cfg(feature = "api")]
     fn run_control(&mut self) -> Result<()> {
         // TODO: try handling of errors/failures without breaking this main loop.
         loop {
@@ -1958,6 +2003,7 @@ impl Vmm {
             .expect("one-shot channel closed");
     }
 
+    #[cfg(feature = "api")]
     fn run_vmm_action(&mut self) -> Result<()> {
         use VmmAction::*;
 
@@ -2130,6 +2176,7 @@ impl PartialEq for VmmAction {
 ///              associated with `/dev/kvm`.
 /// * `config_json` - Optional parameter that can be used to configure the guest machine without
 ///                   using the API socket.
+#[cfg(feature = "api")]
 pub fn start_vmm_thread(
     api_shared_info: Arc<RwLock<InstanceInfo>>,
     api_event_fd: EventFd,
@@ -2143,6 +2190,8 @@ pub fn start_vmm_thread(
             // If this fails, consider it fatal. Use expect().
             let mut vmm = Vmm::new(api_shared_info, api_event_fd, from_api, seccomp_level)
                 .expect("Cannot create VMM");
+
+            println!("start_vmm_thread: Compiled with api feature");
 
             if let Some(json) = config_json {
                 if let Err(e) = vmm.configure_from_json(json) {
@@ -2172,6 +2221,50 @@ pub fn start_vmm_thread(
                     vmm.stop(i32::from(FC_EXIT_CODE_GENERIC_ERROR));
                 }
             }
+        })
+        .expect("VMM thread spawn failed.")
+}
+
+/// Starts a new vmm thread that can service API requests.
+///
+/// # Arguments
+///
+/// * `seccomp_level` - The level of seccomp filtering used. Filters are loaded before executing
+///                     guest code. Can be one of 0 (seccomp disabled), 1 (filter by syscall
+///                     number) or 2 (filter by syscall number and argument values).
+/// * `kvm_fd` - Provides the option of supplying an already existing raw file descriptor
+///              associated with `/dev/kvm`.
+/// * `config_json` - Optional parameter that can be used to configure the guest machine without
+///                   using the API socket.
+#[cfg(not(feature = "api"))]
+pub fn start_vmm_thread(api_shared_info: Arc<RwLock<InstanceInfo>>, seccomp_level: u32, config_json: Option<String>) -> thread::JoinHandle<()> {
+    thread::Builder::new()
+        .name("fc_vmm".to_string())
+        .spawn(move || {
+            // If this fails, consider it fatal. Use expect().
+            let mut vmm = Vmm::new(api_shared_info, seccomp_level)
+                .expect("Cannot create VMM");
+
+            println!("start_vmm_thread: Compiled without api feature");
+
+            if let Some(json) = config_json {
+                if let Err(e) = vmm.configure_from_json(json) {
+                    error!(
+                        "Setting configuration for VMM from one single json failed: {}",
+                        e
+                    );
+                    process::exit(i32::from(FC_EXIT_CODE_BAD_CONFIGURATION));
+                } else if let Err(e) = vmm.start_microvm() {
+                    error!(
+                        "Starting microvm that was configured from one single json failed: {}",
+                        e
+                    );
+                    process::exit(i32::from(FC_EXIT_CODE_UNEXPECTED_ERROR));
+                } else {
+                    info!("Successfully started microvm that was configured from one single json");
+                }
+            }
+            vmm.stop(i32::from(FC_EXIT_CODE_OK));
         })
         .expect("VMM thread spawn failed.")
 }

@@ -33,5 +33,6 @@ cpuid = { path = "../cpuid" }
 tempfile = ">=3.0.2"
 
 [features]
+api=[]
 vsock = ["devices/vsock"]
 

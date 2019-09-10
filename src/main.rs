@@ -61,6 +61,12 @@ fn main() {
         }
     }));
 
+    #[cfg(feature = "api")]
+    println!("Compiled with api feature");
+
+    #[cfg(not(feature = "api"))]
+    println!("Compiled without api feature");
+
     let cmd_arguments = App::new("firecracker")
         .version(crate_version!())
         .author(crate_authors!())
@@ -156,14 +162,19 @@ fn main() {
         vmm_version: crate_version!().to_string(),
     }));
     let mmds_info = MMDS.clone();
+
+    #[cfg(feature = "api")]
     let (to_vmm, from_api) = channel();
+    #[cfg(feature = "api")]
     let server =
         ApiServer::new(mmds_info, shared_info.clone(), to_vmm).expect("Cannot create API server");
 
+    #[cfg(feature = "api")]
     let api_event_fd = server
         .get_event_fd_clone()
         .expect("Cannot clone API eventFD.");
 
+    #[cfg(feature = "api")]
     let _vmm_thread_handle = vmm::start_vmm_thread(
         shared_info,
         api_event_fd,
@@ -172,6 +183,10 @@ fn main() {
         vmm_config_json,
     );
 
+    #[cfg(not(feature = "api"))]
+    let _vmm_thread_handle = vmm::start_vmm_thread(shared_info.clone(), seccomp_level, vmm_config_json);
+
+    #[cfg(feature = "api")]
     match server.bind_and_run(bind_path, start_time_us, start_time_cpu_us, seccomp_level) {
         Ok(_) => (),
         Err(Error::Io(inner)) => match inner.kind() {
