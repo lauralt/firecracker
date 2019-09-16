@@ -12,6 +12,7 @@ extern crate jailer;
 extern crate logger;
 extern crate mmds;
 extern crate seccomp;
+extern crate sys_util;
 extern crate vmm;
 
 use backtrace::Backtrace;
@@ -24,11 +25,13 @@ use std::path::PathBuf;
 use std::process;
 use std::sync::mpsc::channel;
 use std::sync::{Arc, RwLock};
+use std::thread;
 
 use api_server::{ApiServer, Error};
 use fc_util::validators::validate_instance_id;
 use logger::{Metric, LOGGER, METRICS};
 use mmds::MMDS;
+use sys_util::EventFd;
 use vmm::signal_handler::register_signal_handlers;
 use vmm::vmm_config::instance_info::{InstanceInfo, InstanceState};
 
@@ -116,6 +119,14 @@ fn main() {
                 .takes_value(true)
                 .required(false),
         )
+        .arg(
+            Arg::with_name("no-api")
+                .long("no-api")
+                .help("Optional parameter which allows starting and using a microVM without an active API socket.")
+                .takes_value(false)
+                .required(false)
+                .requires("config-file")
+        )
         .get_matches();
 
     let bind_path = cmd_arguments
@@ -155,40 +166,69 @@ fn main() {
         .map(fs::read_to_string)
         .map(|x| x.expect("Unable to open or read from the configuration file"));
 
+    let no_api = cmd_arguments.is_present("no-api");
+
     let shared_info = Arc::new(RwLock::new(InstanceInfo {
         state: InstanceState::Uninitialized,
         id: instance_id,
         vmm_version: crate_version!().to_string(),
     }));
-    let mmds_info = MMDS.clone();
-    let (to_vmm, from_api) = channel();
-    let server =
-        ApiServer::new(mmds_info, shared_info.clone(), to_vmm).expect("Cannot create API server");
 
-    let api_event_fd = server
-        .get_event_fd_clone()
-        .expect("Cannot clone API eventFD.");
+    if no_api {
+        let (_, from_api) = channel();
+        let event_fd = EventFd::new()
+            .map_err(Error::Eventfd)
+            .expect("'cannot create dummy Eventfd.");
 
-    let _vmm_thread_handle = vmm::start_vmm_thread(
-        shared_info,
-        api_event_fd,
-        from_api,
-        seccomp_level,
-        vmm_config_json,
-    );
+        vmm::start_vmm(
+            shared_info,
+            event_fd,
+            from_api,
+            seccomp_level,
+            vmm_config_json,
+        );
+    } else {
+        let (to_vmm, from_api) = channel();
+        let mmds_info = MMDS.clone();
 
-    match server.bind_and_run(bind_path, start_time_us, start_time_cpu_us, seccomp_level) {
-        Ok(_) => (),
-        Err(Error::Io(inner)) => match inner.kind() {
-            ErrorKind::AddrInUse => panic!("Failed to open the API socket: {:?}", Error::Io(inner)),
-            _ => panic!(
-                "Failed to communicate with the API socket: {:?}",
-                Error::Io(inner)
-            ),
-        },
-        Err(eventfd_err @ Error::Eventfd(_)) => {
-            panic!("Failed to open the API socket: {:?}", eventfd_err)
-        }
+        let event_fd = EventFd::new()
+            .map_err(Error::Eventfd)
+            .expect("'cannot create Eventfd.");
+
+        let api_event_fd = event_fd.try_clone().expect("cannot clone Eventfd.");
+        let api_shared_info = shared_info.clone();
+
+        thread::Builder::new()
+            .name("fc_api".to_owned())
+            .spawn(move || {
+                match ApiServer::new(mmds_info, shared_info, to_vmm, event_fd)
+                    .expect("Cannot create API server")
+                    .bind_and_run(bind_path, start_time_us, start_time_cpu_us, seccomp_level)
+                {
+                    Ok(_) => (),
+                    Err(Error::Io(inner)) => match inner.kind() {
+                        ErrorKind::AddrInUse => {
+                            panic!("Failed to open the API socket: {:?}", Error::Io(inner))
+                        }
+                        _ => panic!(
+                            "Failed to communicate with the API socket: {:?}",
+                            Error::Io(inner)
+                        ),
+                    },
+                    Err(eventfd_err @ Error::Eventfd(_)) => {
+                        panic!("Failed to open the API socket: {:?}", eventfd_err)
+                    }
+                }
+            })
+            .expect("API thread spawn failed.");
+
+        vmm::start_vmm(
+            api_shared_info,
+            api_event_fd,
+            from_api,
+            seccomp_level,
+            vmm_config_json,
+        );
     }
 }
 

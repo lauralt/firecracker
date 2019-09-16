@@ -79,12 +79,13 @@ impl ApiServer {
         mmds_info: Arc<Mutex<Mmds>>,
         vmm_shared_info: Arc<RwLock<InstanceInfo>>,
         api_request_sender: mpsc::Sender<Box<VmmAction>>,
+        efd: EventFd,
     ) -> Result<Self> {
         Ok(ApiServer {
             mmds_info,
             vmm_shared_info,
             api_request_sender: Rc::new(api_request_sender),
-            efd: Rc::new(EventFd::new().map_err(Error::Eventfd)?),
+            efd: Rc::new(efd),
         })
     }
 
