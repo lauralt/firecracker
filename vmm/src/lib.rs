@@ -436,6 +436,8 @@ pub enum VmmAction {
     /// Update a network interface, after microVM start. Currently, the only updatable properties
     /// are the RX and TX rate limiters.
     UpdateNetworkInterface(NetworkInterfaceUpdateConfig, OutcomeSender),
+    /// Configure a microvm.
+    ConfigureVm(VmmConfig, OutcomeSender),
 }
 
 /// The enum represents the response sent by the VMM in case of success. The response is either
@@ -764,20 +766,26 @@ struct KernelConfig {
 }
 
 /// Used for configuring a vmm from one single json passed to the Firecracker process.
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize, PartialEq)]
 pub struct VmmConfig {
+    /// Boot source configuration
     #[serde(rename = "boot-source")]
-    boot_source: BootSourceConfig,
+    pub boot_source: BootSourceConfig,
+    /// Block devices attached to the vm
     #[serde(rename = "drives")]
-    block_devices: Vec<BlockDeviceConfig>,
+    pub block_devices: Vec<BlockDeviceConfig>,
+    /// Network devices attached to the vm
     #[serde(rename = "network-interfaces", default)]
-    net_devices: Vec<NetworkInterfaceConfig>,
+    pub net_devices: Vec<NetworkInterfaceConfig>,
+    /// Logger configuration
     #[serde(rename = "logger")]
-    logger: Option<LoggerConfig>,
+    pub logger: Option<LoggerConfig>,
+    /// Machine configuration
     #[serde(rename = "machine-config")]
-    machine_config: Option<VmConfig>,
+    pub machine_config: Option<VmConfig>,
+    /// Vsock device attached to the vm
     #[serde(rename = "vsock")]
-    vsock_device: Option<VsockDeviceConfig>,
+    pub vsock_device: Option<VsockDeviceConfig>,
 }
 
 /// Contains the state and associated methods required for the Firecracker VMM.
@@ -2067,6 +2075,13 @@ impl Vmm {
             UpdateNetworkInterface(netif_update, sender) => {
                 Vmm::send_response(self.update_net_device(netif_update), sender);
             }
+            ConfigureVm(vmm_config, sender) => {
+                if let Err(e) = self.configure_from_json(vmm_config) {
+                    Vmm::send_response(Err(e), sender);
+                } else {
+                    Vmm::send_response(self.start_microvm(), sender);
+                }
+            }
         };
         Ok(())
     }
@@ -2088,14 +2103,8 @@ impl Vmm {
 
     fn configure_from_json(
         &mut self,
-        config_json: String,
+        vmm_config: VmmConfig,
     ) -> std::result::Result<(), VmmActionError> {
-        let vmm_config = serde_json::from_slice::<VmmConfig>(config_json.as_bytes())
-            .unwrap_or_else(|e| {
-                error!("Invalid json: {}", e);
-                process::exit(i32::from(FC_EXIT_CODE_INVALID_JSON));
-            });
-
         if let Some(logger) = vmm_config.logger {
             self.init_logger(logger)?;
         }
@@ -2161,6 +2170,10 @@ impl PartialEq for VmmAction {
             (&StartMicroVm(_), &StartMicroVm(_)) => true,
             (&SendCtrlAltDel(_), &SendCtrlAltDel(_)) => true,
             (&FlushMetrics(_), &FlushMetrics(_)) => true,
+            (
+                &ConfigureVm(ref vm_cfg, _),
+                &ConfigureVm(ref other_vm_cfg, _),
+            ) => vm_cfg == other_vm_cfg,
             _ => false,
         }
     }
@@ -2196,7 +2209,11 @@ pub fn start_vmm(
     .expect("Cannot create VMM");
 
     if let Some(json) = config_json {
-        vmm.configure_from_json(json).unwrap_or_else(|err| {
+        let vmm_config = serde_json::from_slice::<VmmConfig>(json.as_bytes()).unwrap_or_else(|e| {
+            error!("Invalid json: {}", e);
+            process::exit(i32::from(FC_EXIT_CODE_INVALID_JSON));
+        });
+        vmm.configure_from_json(vmm_config).unwrap_or_else(|err| {
             error!(
                 "Setting configuration for VMM from one single json failed: {}",
                 err
@@ -3541,7 +3558,8 @@ mod tests {
             rootfs_file.path().to_str().unwrap()
         );
 
-        match vmm.configure_from_json(json) {
+        match vmm.configure_from_json(serde_json::from_slice::<VmmConfig>(json.as_bytes()).unwrap())
+        {
             Err(VmmActionError::BootSource(
                 ErrorKind::User,
                 BootSourceConfigError::InvalidKernelPath,
@@ -3568,7 +3586,8 @@ mod tests {
             kernel_file.path().to_str().unwrap()
         );
 
-        match vmm.configure_from_json(json) {
+        match vmm.configure_from_json(serde_json::from_slice::<VmmConfig>(json.as_bytes()).unwrap())
+        {
             Err(VmmActionError::DriveConfig(
                 ErrorKind::User,
                 DriveError::InvalidBlockDevicePath,
@@ -3601,7 +3620,8 @@ mod tests {
             rootfs_file.path().to_str().unwrap()
         );
 
-        match vmm.configure_from_json(json) {
+        match vmm.configure_from_json(serde_json::from_slice::<VmmConfig>(json.as_bytes()).unwrap())
+        {
             Err(VmmActionError::MachineConfig(
                 ErrorKind::User,
                 VmConfigError::InvalidVcpuCount,
@@ -3634,7 +3654,8 @@ mod tests {
             rootfs_file.path().to_str().unwrap()
         );
 
-        match vmm.configure_from_json(json) {
+        match vmm.configure_from_json(serde_json::from_slice::<VmmConfig>(json.as_bytes()).unwrap())
+        {
             Err(VmmActionError::MachineConfig(
                 ErrorKind::User,
                 VmConfigError::InvalidMemorySize,
@@ -3666,7 +3687,8 @@ mod tests {
             rootfs_file.path().to_str().unwrap()
         );
 
-        match vmm.configure_from_json(json) {
+        match vmm.configure_from_json(serde_json::from_slice::<VmmConfig>(json.as_bytes()).unwrap())
+        {
             Err(VmmActionError::Logger(
                 ErrorKind::User,
                 LoggerConfigError::InitializationFailure { .. },
@@ -3704,7 +3726,8 @@ mod tests {
             rootfs_file.path().to_str().unwrap()
         );
 
-        match vmm.configure_from_json(json) {
+        match vmm.configure_from_json(serde_json::from_slice::<VmmConfig>(json.as_bytes()).unwrap())
+        {
             Err(VmmActionError::NetworkConfig(
                 ErrorKind::User,
                 NetworkInterfaceError::HostDeviceNameInUse { .. },
@@ -3735,17 +3758,24 @@ mod tests {
                             "host_dev_name": "hostname8"
                         }}
                     ],
+                    "vsock": {{
+                        "vsock_id": "1",
+                        "guest_cid": 3,
+                        "uds_path": "./v.sock"
+                    }},
                      "machine-config": {{
-                            "vcpu_count": 2,
-                            "mem_size_mib": 1024,
-                            "ht_enabled": false
+                        "vcpu_count": 2,
+                        "mem_size_mib": 1024,
+                        "ht_enabled": false
                      }}
             }}"#,
             kernel_file.path().to_str().unwrap(),
             rootfs_file.path().to_str().unwrap()
         );
 
-        assert!(vmm.configure_from_json(json).is_ok());
+        assert!(vmm
+            .configure_from_json(serde_json::from_slice::<VmmConfig>(json.as_bytes()).unwrap())
+            .is_ok());
     }
 
     // Helper function to get ErrorKind of error.

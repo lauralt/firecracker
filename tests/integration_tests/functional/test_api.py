@@ -12,6 +12,8 @@ import host_tools.drive as drive_tools
 import host_tools.logging as log_tools
 import host_tools.network as net_tools
 
+from framework.resources import Actions, BootSource, Drive, Logger, MMDS, \
+    MachineConfigure, Network, Vsock
 
 def test_api_happy_start(test_microvm_with_api):
     """Test a regular microvm API start sequence."""
@@ -761,3 +763,22 @@ def test_api_vsock(test_microvm_with_api):
         uds_path='vsock.sock'
     )
     assert test_microvm.api_session.is_status_bad_request(response.status_code)
+
+
+def test_one_api_start(test_microvm_with_api):
+    """Test microvm start with one API command."""
+    test_microvm = test_microvm_with_api
+    test_microvm.spawn()
+
+    boot_source_json = BootSource.create_json('console=ttyS0 reboot=k panic=1 pci=off',
+                                              test_microvm.create_jailed_resource(test_microvm.kernel_file))
+    rootfs_json = Drive.create_json(drive_id='rootfs',
+                                    path_on_host=test_microvm.create_jailed_resource(test_microvm.rootfs_file),
+                                    is_root_device=True,
+                                    is_read_only=False)
+
+    response = test_microvm.vm_config.put(
+        boot_source=boot_source_json,
+        block_devices=[rootfs_json]
+    )
+    assert test_microvm.api_session.is_status_no_content(response.status_code)

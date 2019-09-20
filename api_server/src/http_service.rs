@@ -8,6 +8,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex, RwLock};
 
 use futures::future::{self, Either};
+use futures::sync::oneshot;
 use futures::{Future, Stream};
 
 use hyper::{self, Chunk, Headers, Method, StatusCode};
@@ -26,7 +27,7 @@ use vmm::vmm_config::logger::LoggerConfig;
 use vmm::vmm_config::machine_config::VmConfig;
 use vmm::vmm_config::net::{NetworkInterfaceConfig, NetworkInterfaceUpdateConfig};
 use vmm::vmm_config::vsock::VsockDeviceConfig;
-use vmm::VmmAction;
+use vmm::{VmmAction, VmmConfig};
 
 fn build_response_base<B: Into<hyper::Body>>(
     status: StatusCode,
@@ -364,6 +365,29 @@ fn parse_netif_req<'a>(path: &'a str, method: Method, body: &Chunk) -> Result<'a
     }
 }
 
+// Turns a PUT /vm-config HTTP request into a ParsedRequest
+fn parse_vm_config_req<'a>(
+    path: &'a str,
+    method: Method,
+    body: &Chunk,
+) -> Result<'a, ParsedRequest> {
+    let path_tokens: Vec<&str> = path[1..].split_terminator('/').collect();
+    match path_tokens[1..].len() {
+        0 if method == Method::Put => {
+            let vm_config = serde_json::from_slice::<VmmConfig>(body).map_err(|e| {
+                METRICS.put_api_requests.vm_cfg_fails.inc();
+                Error::SerdeJson(e)
+            })?;
+            let (sender, receiver) = oneshot::channel();
+            Ok(ParsedRequest::Sync(
+                VmmAction::ConfigureVm(vm_config, sender),
+                receiver,
+            ))
+        }
+        _ => Err(Error::InvalidPathMethod(path, method)),
+    }
+}
+
 // Turns a GET/PUT /vsock HTTP request into a ParsedRequest.
 fn parse_vsock_req<'a>(path: &'a str, method: Method, body: &Chunk) -> Result<'a, ParsedRequest> {
     let path_tokens: Vec<&str> = path[1..].split_terminator('/').collect();
@@ -416,7 +440,6 @@ fn parse_request<'a>(method: Method, path: &'a str, body: &Chunk) -> Result<'a, 
             return Err(Error::InvalidPathMethod(path, method));
         }
     }
-
     match path_tokens[0] {
         "actions" => parse_actions_req(path, method, body),
         "boot-source" => parse_boot_source_req(path, method, body),
@@ -425,6 +448,7 @@ fn parse_request<'a>(method: Method, path: &'a str, body: &Chunk) -> Result<'a, 
         "machine-config" => parse_machine_config_req(path, method, body),
         "network-interfaces" => parse_netif_req(path, method, body),
         "mmds" => parse_mmds_request(path, method, body),
+        "vm-config" => parse_vm_config_req(path, method, body),
         "vsock" => parse_vsock_req(path, method, body),
         _ => Err(Error::InvalidPathMethod(path, method)),
     }
@@ -684,7 +708,7 @@ mod tests {
     use hyper::Body;
     use vmm::vmm_config::logger::LoggerLevel;
     use vmm::vmm_config::machine_config::CpuFeaturesTemplate;
-    use vmm::VmmAction;
+    use vmm::{VmmAction, VmmConfig};
 
     impl<'a> PartialEq for Error<'a> {
         fn eq(&self, other: &Error<'a>) -> bool {
@@ -1385,6 +1409,68 @@ mod tests {
         let path = "/mmds/something";
         let expected_err = Err(Error::InvalidPathMethod(path, Method::Get));
         assert!(parse_mmds_request(path, Method::Get, &body) == expected_err);
+    }
+
+    #[test]
+    fn test_parse_vm_req() {
+        let valid_vm_path = "/vm-config";
+
+        let json = r#"{
+                   "boot-source": {
+                "kernel_image_path": "vmlinux.bin",
+                "boot_args": "console=ttyS0 reboot=k panic=1 pci=off"
+            },
+            "drives": [
+            {
+               "drive_id": "rootfs",
+                   "path_on_host": "xenial.rootfs.ext4",
+                   "is_root_device": true,
+                   "is_read_only": false
+            }
+        ]
+        }"#;
+
+        let body: Chunk = Chunk::from(json);
+        assert!(parse_vm_config_req(valid_vm_path, Method::Put, &body).is_ok());
+
+        let boot_source_body = BootSourceConfig {
+            kernel_image_path: String::from("vmlinux.bin"),
+            boot_args: Some(String::from("console=ttyS0 reboot=k panic=1 pci=off")),
+        };
+
+        let drive_body = BlockDeviceConfig {
+            drive_id: String::from("rootfs"),
+            path_on_host: PathBuf::from(String::from("xenial.rootfs.ext4")),
+            is_root_device: true,
+            is_read_only: false,
+            partuuid: None,
+            rate_limiter: None,
+        };
+        let mut drives_vec = Vec::new();
+        drives_vec.push(drive_body);
+        let vm_config = VmmConfig {
+            boot_source: boot_source_body,
+            block_devices: drives_vec,
+            net_devices: Vec::new(),
+            machine_config: None,
+            logger: None,
+            vsock_device: None,
+        };
+        let (sender, receiver) = oneshot::channel();
+        assert!(parse_vm_config_req(valid_vm_path, Method::Put, &body)
+            .eq(&Ok(ParsedRequest::Sync(
+                VmmAction::ConfigureVm(vm_config, sender),
+                receiver
+            ))));
+
+        let path = "/foo/bar";
+        let expected_err = Error::InvalidPathMethod(path, Method::Put);
+        assert!(parse_vm_config_req(path, Method::Put, &Chunk::from("foo")) == Err(expected_err));
+
+        assert!(
+            parse_vm_config_req(valid_vm_path, Method::Put, &Chunk::from("foo"))
+                == Err(Error::SerdeJson(get_dummy_serde_error()))
+        );
     }
 
     #[test]
