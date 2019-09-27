@@ -64,6 +64,7 @@ impl fmt::Debug for Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+#[derive(Clone)]
 pub struct ApiServer {
     // MMDS info directly accessible from the API thread.
     mmds_info: Arc<Mutex<Mmds>>,
@@ -155,6 +156,10 @@ impl ApiServer {
         // do something in their future chain). When this returns, ongoing connections will be
         // interrupted, and other futures will not complete, as the event loop stops working.
         core.run(f)
+    }
+
+    pub fn get_event_fd_clone(&self) -> Result<EventFd> {
+        self.efd.try_clone().map_err(Error::Eventfd)
     }
 }
 

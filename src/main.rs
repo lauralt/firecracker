@@ -185,26 +185,56 @@ fn main() {
         vmm_version: crate_version!().to_string(),
     }));
 
+    // MMDS only supported with API.
+    let mmds_info = MMDS.clone();
+
     let (to_vmm, from_api) = channel();
     let api_event_fd = EventFd::new()
         .map_err(Error::Eventfd)
         .expect("'cannot create dummy Eventfd.");
+    let ev_clone = api_event_fd.try_clone().unwrap();
+    let server = ApiServer::new(
+        mmds_info,
+        api_shared_info.clone(),
+        to_vmm,
+        api_event_fd,
+    )
+    .expect("Cannot create API server");
+//    let api_event_fd = server
+//        .get_event_fd_clone()
+//        .expect("Cannot clone API eventFD.");
+
+    //  let server2 = server.clone();
 
     // Api enabled.
-    if !no_api {
-        // MMDS only supported with API.
-        let mmds_info = MMDS.clone();
+    if no_api {
+        let (_, from_api) = channel();
 
-        let kick_vmm_efd = api_event_fd.try_clone().expect("cannot clone Eventfd.");
-        let vmm_shared_info = api_shared_info.clone();
+        vmm::start_vmm(
+            api_shared_info,
+            api_event_fd,
+            from_api,
+            seccomp_level,
+            vmm_config_json,
+        );
+    } else {
+        vmm::start_vmm(
+            api_shared_info,
+            api_event_fd,
+            from_api,
+            seccomp_level,
+            vmm_config_json,
+        );
 
         thread::Builder::new()
             .name("fc_api".to_owned())
             .spawn(move || {
-                match ApiServer::new(mmds_info, vmm_shared_info, to_vmm, kick_vmm_efd)
-                    .expect("Cannot create API server")
-                    .bind_and_run(bind_path, start_time_us, start_time_cpu_us, seccomp_level)
-                {
+                match server.bind_and_run(
+                    bind_path,
+                    start_time_us,
+                    start_time_cpu_us,
+                    seccomp_level,
+                ) {
                     Ok(_) => (),
                     Err(Error::Io(inner)) => match inner.kind() {
                         io::ErrorKind::AddrInUse => {
@@ -222,14 +252,6 @@ fn main() {
             })
             .expect("API thread spawn failed.");
     }
-
-    vmm::start_vmm(
-        api_shared_info,
-        api_event_fd,
-        from_api,
-        seccomp_level,
-        vmm_config_json,
-    );
 }
 
 #[cfg(test)]
