@@ -315,8 +315,6 @@ version = "0.1.0"
 name = "polly"
 version = "0.0.1"
 dependencies = [
- "bitflags",
- "epoll",
  "libc",
  "utils",
 ]

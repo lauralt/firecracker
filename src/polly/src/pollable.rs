@@ -1,45 +1,22 @@
 // Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
+
 use std::convert::From;
 use std::fmt::Formatter;
-use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
+use std::os::unix::io::RawFd;
 
-#[derive(Copy, Clone, PartialEq, Debug)]
-pub struct Pollable {
-    // Event manager will use this in callbacks so the EventHandler implementation can
-    // multiplex the handling for multiple registered fds.
-    fd: RawFd,
-}
+use epoll;
 
-/// Wrapper for file descriptors.
-impl Pollable {
-    pub fn from<T: AsRawFd>(rawfd: &T) -> Pollable {
-        Pollable {
-            fd: rawfd.as_raw_fd(),
-        }
-    }
-}
+pub type Events = u8;
 
-impl FromRawFd for Pollable {
-    unsafe fn from_raw_fd(fd: RawFd) -> Pollable {
-        Pollable { fd }
-    }
-}
-
-impl AsRawFd for Pollable {
-    fn as_raw_fd(&self) -> RawFd {
-        self.fd
-    }
-}
-
-pub type EventRegistrationData = (Pollable, EventSet);
+pub type EventRegistrationData = (RawFd, Events);
 
 pub enum PollableOp {
-    /// Register a new handler for a pollable and eventset.
+    /// Register a new handler for a pollable fd and a set of events.
     Register(EventRegistrationData),
-    /// Unregister a handler for a pollable.
-    Unregister(Pollable),
-    /// Update eventset for a specified pollable.
+    /// Unregister a handler for a pollable fd.
+    Unregister(RawFd),
+    /// Update the event set for a specified pollable fd.
     Update(EventRegistrationData),
 }
 
@@ -55,100 +32,100 @@ impl std::fmt::Debug for PollableOp {
     }
 }
 
-bitflags! {
-    pub struct EventSet: u8 {
-        const NONE = 0b0000_0000;
-        const READ = 0b0000_0001;
-        const WRITE = 0b0000_0010;
-        const CLOSE = 0b0000_0100;
-    }
+#[derive(Copy, Clone)]
+pub struct EventSet {
+    events: u8,
+}
+
+pub enum Event {
+    NONE = 0b0000_0000,
+    READ = 0b0000_0001,
+    WRITE = 0b0000_0010,
+    CLOSE = 0b0000_0100,
 }
 
 /// Wraps the epoll specific event mask interface.
 impl EventSet {
+    pub fn new(events: u8) -> Self {
+        EventSet { events }
+    }
     /// Check if this is a read event.
     pub fn is_readable(self) -> bool {
-        self.contains(EventSet::READ)
+        self.events & Event::READ as u8 != 0
     }
     /// Check if this is a write event.
     pub fn is_writeable(self) -> bool {
-        self.contains(EventSet::WRITE)
+        self.events & Event::WRITE as u8 != 0
     }
     /// Check if this is a close event.
     pub fn is_closed(self) -> bool {
-        self.contains(EventSet::CLOSE)
+        self.events & Event::CLOSE as u8 != 0
     }
 }
 
-impl From<EventSet> for epoll::Events {
-    fn from(event: EventSet) -> epoll::Events {
-        let mut epoll_event_mask = epoll::Events::empty();
+impl From<EventSet> for u32 {
+    fn from(event: EventSet) -> u32 {
+        let mut epoll_event_mask = 0u32;
 
         if event.is_readable() {
-            epoll_event_mask |= epoll::Events::EPOLLIN;
+            epoll_event_mask |= epoll::EventType::EPOLL_IN as u32;
         }
 
         if event.is_writeable() {
-            epoll_event_mask |= epoll::Events::EPOLLOUT;
+            epoll_event_mask |= epoll::EventType::EPOLL_OUT as u32;
         }
 
         if event.is_closed() {
-            epoll_event_mask |= epoll::Events::EPOLLRDHUP;
+            epoll_event_mask |= epoll::EventType::EPOLL_RDHUP as u32;
         }
 
         epoll_event_mask
     }
 }
 
-impl std::fmt::Display for Pollable {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "{}", self.fd)
-    }
+pub struct EpollConfig {
+    fd: RawFd,
+    event_mask: Events,
 }
 
-pub struct PollableOpBuilder {
-    fd: Pollable,
-    event_mask: EventSet,
-}
-
-impl PollableOpBuilder {
-    /// Constructs a new PollableOp builder for the specified Pollable.
-    pub fn new(fd: Pollable) -> PollableOpBuilder {
-        PollableOpBuilder {
+impl EpollConfig {
+    /// Constructs a new EpollConfig for the specified pollable fd.
+    pub fn new(fd: RawFd) -> EpollConfig {
+        EpollConfig {
             fd,
-            event_mask: EventSet::NONE,
+            event_mask: Event::NONE as u8,
         }
     }
 
-    /// Caller is interested in Pollable read events.
-    pub fn readable(&mut self) -> &mut PollableOpBuilder {
-        self.event_mask |= EventSet::READ;
+    /// Caller is interested in fd read events.
+    pub fn readable(&mut self) -> &mut EpollConfig {
+        self.event_mask |= Event::READ as u8;
         self
     }
 
-    /// Caller is interested in Pollable write events.
-    pub fn writeable(&mut self) -> &mut PollableOpBuilder {
-        self.event_mask |= EventSet::WRITE;
+    /// Caller is interested in fd write events.
+    pub fn writeable(&mut self) -> &mut EpollConfig {
+        self.event_mask |= Event::WRITE as u8;
         self
     }
 
-    /// Caller is interested in Pollable close events.
-    pub fn closeable(&mut self) -> &mut PollableOpBuilder {
-        self.event_mask |= EventSet::CLOSE;
+    /// Caller is interested in fd close events.
+    pub fn closeable(&mut self) -> &mut EpollConfig {
+        self.event_mask |= Event::CLOSE as u8;
         self
     }
 
-    /// Create a Register PollableOp.
+    /// Create a `Register` PollableOp.
     pub fn register(&self) -> PollableOp {
         PollableOp::Register((self.fd, self.event_mask))
     }
 
-    /// Create an Unregister PollableOp.
+    /// Create an `Unregister` PollableOp.
     pub fn unregister(&self) -> PollableOp {
         PollableOp::Unregister(self.fd)
     }
 
-    /// Create an Update PollableOp.
+    /// Create an `Update` PollableOp.
     pub fn update(&self) -> PollableOp {
         PollableOp::Update((self.fd, self.event_mask))
     }
@@ -158,36 +135,30 @@ impl PollableOpBuilder {
 mod tests {
     use super::*;
     use std::io;
-    #[test]
-    fn test_pollable() {
-        let mut pollable = Pollable::from(&io::stdin());
-        assert_eq!(pollable.as_raw_fd(), io::stdin().as_raw_fd());
-        pollable = unsafe { Pollable::from_raw_fd(io::stdin().as_raw_fd()) };
-        assert_eq!(pollable.as_raw_fd(), io::stdin().as_raw_fd());
-    }
+    use std::os::unix::io::AsRawFd;
 
     #[test]
-    fn test_pollable_op_builder() {
-        let pollable = Pollable::from(&io::stdin());
-        let mut op_register = PollableOpBuilder::new(pollable)
+    fn test_epoll_config() {
+        let pollable = io::stdin().as_raw_fd();
+        let mut op_register = EpollConfig::new(pollable)
             .readable()
             .writeable()
             .closeable()
             .register();
-        assert_eq!(
-            format!("{:?}", op_register),
-            "Register (Pollable { fd: 0 }, READ | WRITE | CLOSE)"
-        );
+        assert_eq!(format!("{:?}", op_register), "Register (0, 7)");
 
         match op_register {
             PollableOp::Register(data) => {
                 assert_eq!(data.0, pollable);
-                assert_eq!(data.1, EventSet::READ | EventSet::WRITE | EventSet::CLOSE);
+                assert_eq!(
+                    data.1,
+                    Event::READ as u8 | Event::WRITE as u8 | Event::CLOSE as u8
+                );
             }
             _ => panic!("Expected Register op"),
         }
 
-        op_register = PollableOpBuilder::new(pollable).closeable().unregister();
+        op_register = EpollConfig::new(pollable).closeable().unregister();
 
         match op_register {
             PollableOp::Unregister(data) => {
@@ -196,12 +167,12 @@ mod tests {
             _ => panic!("Expected Unregister op"),
         }
 
-        op_register = PollableOpBuilder::new(pollable).readable().update();
+        op_register = EpollConfig::new(pollable).readable().update();
 
         match op_register {
             PollableOp::Update(data) => {
                 assert_eq!(data.0, pollable);
-                assert_eq!(data.1, EventSet::READ);
+                assert_eq!(data.1, Event::READ as u8);
             }
             _ => panic!("Expected Update op"),
         }
