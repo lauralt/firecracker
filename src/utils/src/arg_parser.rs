@@ -516,9 +516,9 @@ mod tests {
             "--id",
             "bar",
         ]
-            .into_iter()
-            .map(String::from)
-            .collect::<Vec<String>>();
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<String>>();
 
         assert_eq!(
             arguments.parse(&args),
@@ -537,9 +537,9 @@ mod tests {
             "--api-sock",
             "foobar",
         ]
-            .into_iter()
-            .map(String::from)
-            .collect::<Vec<String>>();
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<String>>();
 
         assert_eq!(
             arguments.parse(&args),
@@ -570,9 +570,9 @@ mod tests {
             "bar",
             "--invalid-arg",
         ]
-            .into_iter()
-            .map(String::from)
-            .collect::<Vec<String>>();
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<String>>();
 
         assert_eq!(
             arguments.parse(&args),
@@ -592,9 +592,9 @@ mod tests {
             "foobar",
             "--no-api",
         ]
-            .into_iter()
-            .map(String::from)
-            .collect::<Vec<String>>();
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<String>>();
 
         assert_eq!(
             arguments.parse(&args),
@@ -612,9 +612,9 @@ mod tests {
             "bar",
             "--id",
         ]
-            .into_iter()
-            .map(String::from)
-            .collect::<Vec<String>>();
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<String>>();
 
         assert_eq!(
             arguments.parse(&args),
@@ -633,9 +633,9 @@ mod tests {
             "--no-api",
             "foobar",
         ]
-            .into_iter()
-            .map(String::from)
-            .collect::<Vec<String>>();
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<String>>();
 
         assert_eq!(
             arguments.parse(&args),
@@ -653,9 +653,9 @@ mod tests {
             "bar",
             "foobar",
         ]
-            .into_iter()
-            .map(String::from)
-            .collect::<Vec<String>>();
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<String>>();
 
         assert_eq!(
             arguments.parse(&args),
@@ -691,9 +691,9 @@ mod tests {
             "--",
             "--extra-flag",
         ]
-            .into_iter()
-            .map(String::from)
-            .collect::<Vec<String>>();
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<String>>();
 
         assert!(arguments.parse(&args).is_ok());
         assert!(arguments.extra_args.contains(&"--extra-flag".to_string()));

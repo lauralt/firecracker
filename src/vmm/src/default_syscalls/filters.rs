@@ -6,7 +6,8 @@ extern crate utils;
 
 use seccomp::{
     allow_syscall, allow_syscall_if, Error, SeccompAction, SeccompCmpArgLen as ArgLen,
-    SeccompCmpOp::Eq, SeccompCondition as Cond, SeccompFilter, SeccompRule,
+    SeccompCmpOp::Eq, SeccompCondition as Cond, SeccompError, SeccompFilter, SeccompLevel,
+    SeccompRule,
 };
 use utils::signal::sigrtmin;
 
@@ -109,4 +110,28 @@ pub fn default_filter() -> Result<SeccompFilter, Error> {
         .collect(),
         SeccompAction::Trap,
     )?)
+}
+
+/// Generate a seccomp filter based on a seccomp level value.
+pub fn get_seccomp_filter(seccomp_level: SeccompLevel) -> Result<SeccompFilter, SeccompError> {
+    match seccomp_level {
+        SeccompLevel::None => Ok(SeccompFilter::empty()),
+        SeccompLevel::Basic => Ok(default_filter()
+            .map_err(SeccompError::SeccompFilter)?
+            .allow_all()),
+        SeccompLevel::Advanced => default_filter().map_err(SeccompError::SeccompFilter),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::get_seccomp_filter;
+    use seccomp::SeccompLevel;
+
+    #[test]
+    fn test_parse_seccomp_ok() {
+        assert!(get_seccomp_filter(SeccompLevel::None).is_ok());
+        assert!(get_seccomp_filter(SeccompLevel::Basic).is_ok());
+        assert!(get_seccomp_filter(SeccompLevel::Advanced).is_ok());
+    }
 }
