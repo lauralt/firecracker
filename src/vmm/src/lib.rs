@@ -89,7 +89,9 @@ use vmm_config::boot_source::{
 use vmm_config::device_config::DeviceConfigs;
 use vmm_config::drive::{BlockDeviceConfig, BlockDeviceConfigs, DriveError};
 use vmm_config::instance_info::{InstanceInfo, InstanceState};
-use vmm_config::logger::{LoggerConfig, LoggerConfigError, LoggerLevel, LoggerWriter};
+use vmm_config::logger::{
+    LoggerConfig, LoggerConfigError, LoggerLevel, LoggerWriter, MetricsConfig, MetricsConfigError,
+};
 use vmm_config::machine_config::{VmConfig, VmConfigError};
 use vmm_config::net::{
     NetworkInterfaceConfig, NetworkInterfaceConfigs, NetworkInterfaceError,
@@ -375,6 +377,8 @@ pub struct VmmConfig {
     net_devices: Vec<NetworkInterfaceConfig>,
     #[serde(rename = "logger")]
     logger: Option<LoggerConfig>,
+    #[serde(rename = "metrics")]
+    metrics: Option<MetricsConfig>,
     #[serde(rename = "machine-config")]
     machine_config: Option<VmConfig>,
     #[serde(rename = "vsock")]
@@ -673,7 +677,7 @@ impl Vmm {
                 LoggerError::NeverInitialized(s) => (ErrorKind::User, s),
                 _ => (ErrorKind::Internal, e.to_string()),
             };
-            VmmActionError::Logger(kind, LoggerConfigError::FlushMetrics(error_contents))
+            VmmActionError::Metrics(kind, MetricsConfigError::FlushMetrics(error_contents))
         })
     }
 
@@ -1579,10 +1583,12 @@ impl Vmm {
         }
 
         let firecracker_version;
+        let name;
         {
             let guard = self.shared_info.read().unwrap();
             LOGGER.set_instance_id(guard.id.clone());
             firecracker_version = guard.vmm_version.clone();
+            name = guard.name.clone();
         }
 
         LOGGER.set_level(match logger_cfg.level {
@@ -1597,14 +1603,8 @@ impl Vmm {
 
         LOGGER
             .init(
-                &AppInfo::new("Firecracker", &firecracker_version),
+                &AppInfo::new(&name, &firecracker_version),
                 Box::new(LoggerWriter::new(&logger_cfg.log_fifo).map_err(|e| {
-                    VmmActionError::Logger(
-                        ErrorKind::User,
-                        LoggerConfigError::InitializationFailure(e.to_string()),
-                    )
-                })?),
-                Box::new(LoggerWriter::new(&logger_cfg.metrics_fifo).map_err(|e| {
                     VmmActionError::Logger(
                         ErrorKind::User,
                         LoggerConfigError::InitializationFailure(e.to_string()),
@@ -1615,6 +1615,23 @@ impl Vmm {
                 VmmActionError::Logger(
                     ErrorKind::User,
                     LoggerConfigError::InitializationFailure(e.to_string()),
+                )
+            })
+    }
+
+    /// Configures the metrics as described in `metrics_cfg`.
+    pub fn init_metrics(&self, metrics_cfg: MetricsConfig) -> UserResult {
+        LOGGER
+            .init_metrics(Box::new(LoggerWriter::new(&metrics_cfg).map_err(|e| {
+                VmmActionError::Metrics(
+                    ErrorKind::User,
+                    MetricsConfigError::InitializationFailure(e.to_string()),
+                )
+            })?))
+            .map_err(|e| {
+                VmmActionError::Metrics(
+                    ErrorKind::User,
+                    MetricsConfigError::InitializationFailure(e.to_string()),
                 )
             })
     }
@@ -1646,6 +1663,9 @@ impl Vmm {
 
         if let Some(logger) = vmm_config.logger {
             self.init_logger(logger)?;
+        }
+        if let Some(metrics) = vmm_config.metrics {
+            self.init_metrics(metrics)?;
         }
         self.configure_boot_source(vmm_config.boot_source)?;
         for drive_config in vmm_config.block_devices.into_iter() {

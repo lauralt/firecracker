@@ -190,7 +190,8 @@ fn main() {
     let api_shared_info = Arc::new(RwLock::new(InstanceInfo {
         state: InstanceState::Uninitialized,
         id: instance_id.clone(),
-        vmm_version: FIRECRACKER_VERSION.to_string(),
+        vmm_version: app.get_version().to_string(),
+        name: app.get_name().to_string(),
     }));
 
     let request_event_fd = EventFd::new(libc::EFD_NONBLOCK)
@@ -351,6 +352,9 @@ fn vmm_control_event(
                     .map(|_| api_server::VmmData::Empty),
                 ConfigureLogger(logger_description) => vmm
                     .init_logger(logger_description)
+                    .map(|_| api_server::VmmData::Empty),
+                ConfigureMetrics(metrics_description) => vmm
+                    .init_metrics(metrics_description)
                     .map(|_| api_server::VmmData::Empty),
                 FlushMetrics => vmm.flush_metrics().map(|_| api_server::VmmData::Empty),
                 GetVmConfiguration => Ok(api_server::VmmData::MachineConfiguration(

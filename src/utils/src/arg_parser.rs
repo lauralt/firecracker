@@ -113,6 +113,14 @@ impl<'a> App<'a> {
     pub fn arguments(&self) -> &Arguments {
         &self.arguments
     }
+
+    pub fn get_name(&self) -> &'a str {
+        self.name
+    }
+
+    pub fn get_version(&self) -> &'a str {
+        self.version
+    }
 }
 
 /// Stores the characteristics of the `name` command line argument.

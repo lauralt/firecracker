@@ -511,7 +511,7 @@ impl Logger {
         &self,
         app_info: &AppInfo,
         log_dest: Box<dyn Write + Send>,
-        metrics_dest: Box<dyn Write + Send>,
+        //   metrics_dest: Box<dyn Write + Send>,
     ) -> Result<()> {
         self.try_lock(INITIALIZING)?;
         {
@@ -519,11 +519,11 @@ impl Logger {
             *g = Some(log_dest);
         }
 
-        {
-            let mut g = self.metrics_buf_guard();
-
-            *g = Some(metrics_dest);
-        }
+        //        {
+        //            let mut g = self.metrics_buf_guard();
+        //
+        //            *g = Some(metrics_dest);
+        //        }
 
         set_max_level(Level::Trace.to_level_filter());
 
@@ -532,6 +532,17 @@ impl Logger {
             format!("Running {} v{}", app_info.name, app_info.version),
             Level::Info,
         );
+
+        Ok(())
+    }
+
+    /// bla
+    pub fn init_metrics(&self, metrics_dest: Box<dyn Write + Send>) -> Result<()> {
+        {
+            let mut g = self.metrics_buf_guard();
+
+            *g = Some(metrics_dest);
+        }
 
         Ok(())
     }

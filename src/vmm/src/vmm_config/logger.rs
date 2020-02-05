@@ -7,6 +7,7 @@ use libc::O_NONBLOCK;
 use std::fmt::{Display, Formatter};
 use std::fs::{File, OpenOptions};
 use std::io::{LineWriter, Write};
+use std::ops::Deref;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard};
@@ -80,8 +81,6 @@ pub enum LoggerLevel {
 pub struct LoggerConfig {
     /// Named pipe used as output for logs.
     pub log_fifo: String,
-    /// Named pipe used as output for metrics.
-    pub metrics_fifo: String,
     /// The level of the Logger.
     #[serde(default = "default_level")]
     pub level: LoggerLevel,
@@ -93,6 +92,17 @@ pub struct LoggerConfig {
     pub show_log_origin: bool,
 }
 
+/// Named pipe used as output for metrics.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct MetricsConfig(String);
+
+impl Deref for MetricsConfig {
+    type Target = String;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 fn default_level() -> LoggerLevel {
     LoggerLevel::Warning
 }
@@ -102,6 +112,13 @@ fn default_level() -> LoggerLevel {
 pub enum LoggerConfigError {
     /// Cannot initialize the logger due to bad user input.
     InitializationFailure(String),
+}
+
+/// Errors associated with actions on the `LoggerConfig`.
+#[derive(Debug)]
+pub enum MetricsConfigError {
+    /// Cannot initialize the metrics due to bad user input.
+    InitializationFailure(String),
     /// Cannot flush the metrics.
     FlushMetrics(String),
 }
@@ -109,6 +126,15 @@ pub enum LoggerConfigError {
 impl Display for LoggerConfigError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         use self::LoggerConfigError::*;
+        match *self {
+            InitializationFailure(ref err_msg) => write!(f, "{}", err_msg.replace("\"", "")),
+        }
+    }
+}
+
+impl Display for MetricsConfigError {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        use self::MetricsConfigError::*;
         match *self {
             InitializationFailure(ref err_msg) => write!(f, "{}", err_msg.replace("\"", "")),
             FlushMetrics(ref err_msg) => write!(f, "{}", err_msg.replace("\"", "")),
