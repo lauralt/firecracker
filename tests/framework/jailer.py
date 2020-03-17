@@ -170,14 +170,14 @@ class JailerContext:
             return 'ip netns exec {} '.format(self.netns)
         return ''
 
-    def setup(self):
+    def setup(self, add_netns=True):
         """Set up this jailer context."""
         os.makedirs(
             self.chroot_base if self.chroot_base is not None
             else DEFAULT_CHROOT_PATH,
             exist_ok=True
         )
-        if self.netns:
+        if (self.netns is not None) & add_netns:
             run('ip netns add {}'.format(self.netns), shell=True, check=True)
 
     def cleanup(self):

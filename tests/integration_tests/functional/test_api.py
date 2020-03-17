@@ -12,6 +12,115 @@ import host_tools.drive as drive_tools
 import host_tools.logging as log_tools
 import host_tools.network as net_tools
 
+from subprocess import run
+
+
+def test_api_start(test_microvm_with_api):
+    """Test a microvm API start sequence."""
+    test_microvm = test_microvm_with_api
+    if test_microvm_with_api.jailer.netns:
+        run('ip netns add {}'.format(test_microvm_with_api.jailer.netns),
+            shell=True, check=True)
+
+    # Set up the resources needed, the jailed paths etc.
+    # boot source
+    boot_source_args = {
+        'kernel_image_path': test_microvm.create_jailed_resource(
+            test_microvm.kernel_file, create_jail=True),
+        'boot_args': None
+    }
+
+    # 4 drives
+    root_path = test_microvm.create_jailed_resource(
+        test_microvm.rootfs_file, create_jail=True)
+
+    fs1 = drive_tools.FilesystemFile(
+        os.path.join(test_microvm.fsfiles, 'id1')
+    )
+    fs1_path = test_microvm.create_jailed_resource(fs1.path,
+                                                   create_jail=True)
+    fs2 = drive_tools.FilesystemFile(
+        os.path.join(test_microvm.fsfiles, 'id2')
+    )
+    fs2_path = test_microvm.create_jailed_resource(fs2.path,
+                                                   create_jail=True)
+    fs3 = drive_tools.FilesystemFile(
+        os.path.join(test_microvm.fsfiles, 'id3')
+    )
+    fs3_path = test_microvm.create_jailed_resource(fs3.path,
+                                                   create_jail=True)
+    # 3 net devices
+    first_if_name = 'first_tap'
+    tap1 = net_tools.Tap(first_if_name, test_microvm.jailer.netns)
+
+    second_if_name = 'second_tap'
+    tap2 = net_tools.Tap(second_if_name, test_microvm.jailer.netns)
+
+    third_if_name = 'third_tap'
+    tap3 = net_tools.Tap(third_if_name, test_microvm.jailer.netns)
+
+    start = time.time()
+    test_microvm.spawn(add_netns=False)
+
+    test_microvm.boot.put(**boot_source_args)
+
+    test_microvm.drive.put(
+        drive_id='rootfs',
+        path_on_host=root_path,
+        is_root_device=True,
+        is_read_only=False
+    )
+
+    test_microvm.drive.put(
+        drive_id='id1',
+        path_on_host=fs1_path,
+        is_root_device=False,
+        is_read_only=False
+    )
+
+    test_microvm.drive.put(
+        drive_id='id2',
+        path_on_host=fs2_path,
+        is_root_device=False,
+        is_read_only=False
+    )
+
+    test_microvm.drive.put(
+        drive_id='id3',
+        path_on_host=fs3_path,
+        is_root_device=False,
+        is_read_only=False
+    )
+
+    test_microvm.network.put(
+        iface_id='1',
+        guest_mac='06:00:00:00:00:01',
+        host_dev_name=tap1.name
+    )
+
+    test_microvm.network.put(
+        iface_id='2',
+        guest_mac='07:00:00:00:00:01',
+        host_dev_name=tap2.name
+    )
+
+    test_microvm.network.put(
+        iface_id='3',
+        guest_mac='08:00:00:00:00:01',
+        host_dev_name=tap3.name
+    )
+
+    test_microvm.start()
+    end = time.time()
+    # elapsed time measured in ms
+    elapsed_time = (end - start) * 1000
+
+    f = open("framework/results_api_local", "a")
+    f.write("%.3f\n" % elapsed_time)
+
+    response = test_microvm.machine_cfg.get()
+    assert test_microvm.api_session.is_status_ok(response.status_code)
+
 
 def test_api_happy_start(test_microvm_with_api):
     """Test a regular microvm API start sequence."""

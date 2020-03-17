@@ -4,14 +4,18 @@
 
 import os
 import re
+import time
 
 from retry.api import retry_call
+from subprocess import run
 
 import pytest
 
 import framework.utils as utils
 
+import host_tools.drive as drive_tools
 import host_tools.logging as log_tools
+import host_tools.network as net_tools
 
 
 def _configure_vm_from_json(test_microvm, vm_config_file):
@@ -39,6 +43,53 @@ def _configure_vm_from_json(test_microvm, vm_config_file):
     test_microvm.create_jailed_resource(vm_config_path, create_jail=True)
     test_microvm.jailer.extra_args = {'config-file': os.path.basename(
         vm_config_file)}
+
+
+@pytest.mark.parametrize(
+    "vm_config_file",
+    ["framework/vm_config_perf.json"]
+)
+def test_config_start(test_microvm_with_api, vm_config_file):
+    """Test if a microvm configured from file boots successfully."""
+    test_microvm = test_microvm_with_api
+    if test_microvm_with_api.jailer.netns:
+        run('ip netns add {}'.format(test_microvm_with_api.jailer.netns),
+            shell=True, check=True)
+
+    # 3 drives (+ root device)
+    fs1 = drive_tools.FilesystemFile(
+        os.path.join(test_microvm.fsfiles, 'id1')
+    )
+    test_microvm.create_jailed_resource(fs1.path, create_jail=True)
+    fs2 = drive_tools.FilesystemFile(
+        os.path.join(test_microvm.fsfiles, 'id2')
+    )
+    test_microvm.create_jailed_resource(fs2.path, create_jail=True)
+    fs3 = drive_tools.FilesystemFile(
+        os.path.join(test_microvm.fsfiles, 'id3')
+    )
+    test_microvm.create_jailed_resource(fs3.path, create_jail=True)
+
+    # 3 net devices
+    first_if_name = 'first_tap'
+    _tap1 = net_tools.Tap(first_if_name, test_microvm.jailer.netns)
+    second_if_name = 'second_tap'
+    _tap2 = net_tools.Tap(second_if_name, test_microvm.jailer.netns)
+    third_if_name = 'third_tap'
+    _tap3 = net_tools.Tap(third_if_name, test_microvm.jailer.netns)
+
+    _configure_vm_from_json(test_microvm, vm_config_file)
+    start = time.time()
+    test_microvm.spawn(add_netns=False)
+    end = time.time()
+    # elapsed time measured in ms
+    elapsed_time = (end - start) * 1000
+
+    f = open("framework/results_config_file_local", "a")
+    f.write("%.3f\n" % elapsed_time)
+
+    response = test_microvm.machine_cfg.get()
+    assert test_microvm.api_session.is_status_ok(response.status_code)
 
 
 @pytest.mark.parametrize(

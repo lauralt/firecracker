@@ -259,10 +259,10 @@ class Microvm:
         os.makedirs(self._kernel_path, exist_ok=True)
         os.makedirs(self._fsfiles_path, exist_ok=True)
 
-    def spawn(self):
+    def spawn(self, add_netns=True):
         """Start a microVM as a daemon or in a screen session."""
         # pylint: disable=subprocess-run-check
-        self._jailer.setup()
+        self._jailer.setup(add_netns)
         self._api_socket = self._jailer.api_socket_path()
         self._api_session = Session()
 
