@@ -90,7 +90,6 @@
 //! Logs can be flushed either to stdout/stderr or to a byte-oriented sink (File, FIFO, Ring Buffer
 //! etc).
 
-use std;
 use std::fmt;
 use std::io::{sink, stderr, stdout, Write};
 use std::result;
@@ -405,8 +404,6 @@ pub enum LoggerError {
     IsInitializing,
     /// The logger does not allow reinitialization.
     AlreadyInitialized,
-    /// Writing the specified buffer failed.
-    Write(std::io::Error),
 }
 
 impl fmt::Display for LoggerError {
@@ -420,7 +417,6 @@ impl fmt::Display for LoggerError {
             LoggerError::AlreadyInitialized => {
                 "Reinitialization of logger not allowed.".to_string()
             }
-            LoggerError::Write(ref e) => format!("Failed to write logs. Error: {}", e),
         };
         write!(f, "{}", printable)
     }
@@ -452,8 +448,6 @@ impl Log for Logger {
 
 #[cfg(test)]
 mod tests {
-    use std::io::ErrorKind;
-
     use super::*;
     use std::io::Read;
     use std::sync::Arc;
@@ -713,13 +707,6 @@ mod tests {
         assert_eq!(
             format!("{}", LoggerError::IsInitializing),
             "The logger is initializing. Can't perform the requested action right now."
-        );
-        assert_eq!(
-            format!(
-                "{}",
-                LoggerError::Write(std::io::Error::new(ErrorKind::Interrupted, "write"))
-            ),
-            "Failed to write logs. Error: write"
         );
     }
 }
