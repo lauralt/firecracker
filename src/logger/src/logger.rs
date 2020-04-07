@@ -105,9 +105,6 @@ use super::extract_guard;
 /// Type for returning functions outcome.
 pub type Result<T> = result::Result<T, LoggerError>;
 
-// Values used by the Logger.
-const IN_PREFIX_SEPARATOR: &str = ":";
-
 lazy_static! {
     static ref _LOGGER_INNER: Logger = Logger::new();
 
@@ -240,33 +237,28 @@ impl Logger {
     /// Creates the first portion (to the left of the separator)
     /// of the log statement based on the logger settings.
     fn create_prefix(&self, record: &Record) -> String {
-        let ins_id = extract_guard(self.instance_id.read()).to_string();
+        let mut prefix: Vec<String> = vec![];
 
-        let level = if self.show_level() {
-            record.level().to_string()
-        } else {
-            "".to_string()
+        let instance_id = extract_guard(self.instance_id.read());
+        if !instance_id.is_empty() {
+            prefix.push(instance_id.to_string());
+        }
+
+        if self.show_level() {
+            prefix.push(record.level().to_string());
         };
 
-        let pth = if self.show_file_path() {
-            record.file().unwrap_or("unknown").to_string()
-        } else {
-            "".to_string()
+        if self.show_file_path() {
+            prefix.push(record.file().unwrap_or("unknown").to_string());
         };
 
-        let line = if self.show_line_numbers() {
-            if let Some(ln) = record.line() {
-                ln.to_string()
-            } else {
-                "".to_string()
+        if self.show_line_numbers() {
+            if let Some(line) = record.line() {
+                prefix.push(line.to_string());
             }
-        } else {
-            "".to_string()
-        };
+        }
 
-        let mut prefix: Vec<String> = vec![ins_id, level, pth, line];
-        prefix.retain(|i| !i.is_empty());
-        format!(" [{}]", prefix.join(IN_PREFIX_SEPARATOR))
+        format!("[{}]", prefix.join(":"))
     }
 
     /// Try to change the state of the logger.
@@ -430,7 +422,7 @@ impl Log for Logger {
 
     fn log(&self, record: &Record) {
         let msg = format!(
-            "{}{} {}",
+            "{} {} {}",
             LocalTime::now(),
             self.create_prefix(&record),
             record.args()
