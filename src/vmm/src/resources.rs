@@ -11,6 +11,7 @@ use vmm_config::boot_source::{
     BootConfig, BootSourceConfig, BootSourceConfigError, DEFAULT_KERNEL_CMDLINE,
 };
 use vmm_config::drive::*;
+use vmm_config::instance_info::InstanceInfo;
 use vmm_config::logger::{init_logger, LoggerConfig, LoggerConfigError};
 use vmm_config::machine_config::{VmConfig, VmConfigError};
 use vmm_config::metrics::{init_metrics, MetricsConfig, MetricsConfigError};
@@ -87,13 +88,13 @@ impl VmResources {
     /// Configures Vmm resources as described by the `config_json` param.
     pub fn from_json(
         config_json: &str,
-        firecracker_version: &str,
+        instance_info: &InstanceInfo,
     ) -> std::result::Result<Self, Error> {
         let vmm_config: VmmConfig = serde_json::from_slice::<VmmConfig>(config_json.as_bytes())
             .map_err(|_| Error::InvalidJson)?;
 
         if let Some(logger) = vmm_config.logger {
-            init_logger(logger, firecracker_version).map_err(Error::Logger)?;
+            init_logger(logger, instance_info).map_err(Error::Logger)?;
         }
 
         if let Some(metrics) = vmm_config.metrics {
@@ -397,6 +398,13 @@ mod tests {
         let kernel_file = TempFile::new().unwrap();
         let rootfs_file = TempFile::new().unwrap();
 
+        let default_instance_info = InstanceInfo {
+            id: "".to_string(),
+            started: false,
+            vmm_version: "SOME_VERSION".to_string(),
+            app_name: "".to_string(),
+        };
+
         // We will test different scenarios with invalid resources configuration and
         // check the expected errors. We include configuration for the kernel and rootfs
         // in every json because they are mandatory fields. If we don't configure
@@ -421,7 +429,7 @@ mod tests {
             rootfs_file.as_path().to_str().unwrap()
         );
 
-        match VmResources::from_json(json.as_str(), "some_version") {
+        match VmResources::from_json(json.as_str(), &default_instance_info) {
             Err(Error::BootSource(BootSourceConfigError::InvalidKernelPath(_))) => (),
             _ => unreachable!(),
         }
@@ -445,7 +453,7 @@ mod tests {
             kernel_file.as_path().to_str().unwrap()
         );
 
-        match VmResources::from_json(json.as_str(), "some_version") {
+        match VmResources::from_json(json.as_str(), &default_instance_info) {
             Err(Error::BlockDevice(DriveError::InvalidBlockDevicePath)) => (),
             _ => unreachable!(),
         }
@@ -475,7 +483,7 @@ mod tests {
             rootfs_file.as_path().to_str().unwrap()
         );
 
-        match VmResources::from_json(json.as_str(), "some_version") {
+        match VmResources::from_json(json.as_str(), &default_instance_info) {
             Err(Error::VmConfig(VmConfigError::InvalidVcpuCount)) => (),
             _ => unreachable!(),
         }
@@ -505,7 +513,7 @@ mod tests {
             rootfs_file.as_path().to_str().unwrap()
         );
 
-        match VmResources::from_json(json.as_str(), "some_version") {
+        match VmResources::from_json(json.as_str(), &default_instance_info) {
             Err(Error::VmConfig(VmConfigError::InvalidMemorySize)) => (),
             _ => unreachable!(),
         }
@@ -533,7 +541,7 @@ mod tests {
             rootfs_file.as_path().to_str().unwrap()
         );
 
-        match VmResources::from_json(json.as_str(), "some_version") {
+        match VmResources::from_json(json.as_str(), &default_instance_info) {
             Err(Error::Logger(LoggerConfigError::InitializationFailure { .. })) => (),
             _ => unreachable!(),
         }
@@ -564,7 +572,7 @@ mod tests {
             rootfs_file.as_path().to_str().unwrap()
         );
 
-        match VmResources::from_json(json.as_str(), "some_version") {
+        match VmResources::from_json(json.as_str(), &default_instance_info) {
             Err(Error::Metrics(MetricsConfigError::InitializationFailure { .. })) => (),
             _ => unreachable!(),
         }
@@ -599,7 +607,7 @@ mod tests {
             rootfs_file.as_path().to_str().unwrap()
         );
 
-        match VmResources::from_json(json.as_str(), "some_version") {
+        match VmResources::from_json(json.as_str(), &default_instance_info) {
             Err(Error::NetDevice(NetworkInterfaceError::CreateNetworkDevice(
                 devices::virtio::net::Error::TapOpen { .. },
             ))) => (),
@@ -642,7 +650,7 @@ mod tests {
             kernel_file.as_path().to_str().unwrap(),
             rootfs_file.as_path().to_str().unwrap(),
         );
-        assert!(VmResources::from_json(json.as_str(), "some_version").is_ok());
+        assert!(VmResources::from_json(json.as_str(), &default_instance_info).is_ok());
 
         // Test all configuration, this time trying to configure the MMDS with an
         // empty body. It will make it access the code path in which it sets the
@@ -678,7 +686,7 @@ mod tests {
             kernel_file.as_path().to_str().unwrap(),
             rootfs_file.as_path().to_str().unwrap(),
         );
-        assert!(VmResources::from_json(json.as_str(), "some_version").is_ok());
+        assert!(VmResources::from_json(json.as_str(), &default_instance_info).is_ok());
     }
 
     #[test]
