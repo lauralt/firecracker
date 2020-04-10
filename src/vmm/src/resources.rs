@@ -292,7 +292,6 @@ mod tests {
 
     use super::*;
     use dumbo::MacAddr;
-    use logger::{LevelFilter, LOGGER};
     use resources::VmResources;
     use utils::tempfile::TempFile;
     use vmm_config::boot_source::{BootConfig, BootSourceConfig, DEFAULT_KERNEL_CMDLINE};
@@ -540,7 +539,7 @@ mod tests {
         }
 
         // The previous call enables the logger. We need to disable it.
-        LOGGER.set_max_level(LevelFilter::Off);
+        logger::set_max_level(logger::LevelFilter::Off);
 
         // Invalid path for metrics pipe.
         json = format!(

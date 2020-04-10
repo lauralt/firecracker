@@ -115,8 +115,8 @@ pub fn init_logger(
     logger_cfg: LoggerConfig,
     firecracker_version: &str,
 ) -> std::result::Result<(), LoggerConfigError> {
+    logger::set_max_level(logger_cfg.level.into());
     LOGGER
-        .set_max_level(logger_cfg.level.into())
         .set_include_origin(logger_cfg.show_log_origin, logger_cfg.show_log_origin)
         .set_include_level(logger_cfg.show_level);
 

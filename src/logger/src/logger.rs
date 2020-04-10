@@ -97,7 +97,7 @@ use std::result;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, RwLock};
 
-use log::{max_level, set_logger, set_max_level, Level, LevelFilter, Log, Metadata, Record};
+use log::{set_logger, Level, Log, Metadata, Record};
 use metrics::{Metric, METRICS};
 use utils::time::LocalTime;
 
@@ -109,7 +109,6 @@ pub type Result<T> = result::Result<T, LoggerError>;
 // Values used by the Logger.
 const IN_PREFIX_SEPARATOR: &str = ":";
 const MSG_SEPARATOR: &str = " ";
-const DEFAULT_MAX_LEVEL: LevelFilter = LevelFilter::Warn;
 
 lazy_static! {
     static ref _LOGGER_INNER: Logger = Logger::new();
@@ -243,40 +242,6 @@ impl Logger {
         self
     }
 
-    /// Explicitly sets the max log level for the Logger.
-    /// The default level is WARN. So, ERROR and WARN statements will be shown (i.e. all that is
-    /// bigger than the level code).
-    ///
-    /// # Arguments
-    ///
-    /// * `level` - Set the highest log level.
-    /// # Example
-    ///
-    /// ```
-    /// #[macro_use]
-    /// extern crate logger;
-    /// extern crate log;
-    /// use logger::LOGGER;
-    /// use std::ops::Deref;
-    ///
-    /// fn main() {
-    ///     let l = LOGGER.deref();
-    ///     l.set_max_level(log::LevelFilter::Warn);
-    ///     assert!(l.configure(Some("MY-INSTANCE".to_string())).is_ok());
-    ///     info!("An informational log message");
-    ///     warn!("A test warning message");
-    /// }
-    /// ```
-    /// The code above will more or less print:
-    /// ```bash
-    /// 2018-11-07T05:34:25.180751152 [MY-INSTANCE:INFO:logger/src/lib.rs:389] A test warning
-    /// message
-    /// ```
-    pub fn set_max_level(&self, level: LevelFilter) -> &Self {
-        set_max_level(level);
-        self
-    }
-
     /// Creates the first portion (to the left of the separator)
     /// of the log statement based on the logger settings.
     fn create_prefix(&self, record: &Record) -> String {
@@ -335,14 +300,6 @@ impl Logger {
         Ok(())
     }
 
-    /// if the max level hasn't been configured yet, set it to default
-    fn try_init_max_level(&self) {
-        // if the max level hasn't been configured yet, set it to default
-        if max_level() == LevelFilter::Off {
-            self.set_max_level(DEFAULT_MAX_LEVEL);
-        }
-    }
-
     /// Preconfigure the logger prior to initialization.
     /// Performs the most basic steps in order to enable the logger to write to stdout or stderr
     /// even before calling LOGGER.init(). Calling this method is optional.
@@ -374,8 +331,6 @@ impl Logger {
         if let Some(some_instance_id) = instance_id {
             self.set_instance_id(some_instance_id);
         }
-
-        self.try_init_max_level();
 
         self.state.store(Self::UNINITIALIZED, Ordering::SeqCst);
 
@@ -414,8 +369,6 @@ impl Logger {
 
             *g = Some(log_dest);
         }
-
-        self.try_init_max_level();
 
         self.state.store(Self::INITIALIZED, Ordering::SeqCst);
         self.write_log(header, Level::Info);
@@ -481,8 +434,8 @@ impl fmt::Display for LoggerError {
 /// Implements the "Log" trait from the externally used "log" crate.
 impl Log for Logger {
     // This is currently not used.
-    fn enabled(&self, _metadata: &Metadata) -> bool {
-        true
+    fn enabled(&self, _: &Metadata) -> bool {
+        unreachable!()
     }
 
     fn log(&self, record: &Record) {
@@ -497,7 +450,9 @@ impl Log for Logger {
     }
 
     // This is currently not used.
-    fn flush(&self) {}
+    fn flush(&self) {
+        unreachable!()
+    }
 }
 
 #[cfg(test)]
@@ -550,9 +505,8 @@ mod tests {
         l.set_include_origin(false, true);
         assert_eq!(l.show_line_numbers(), false);
 
-        l.set_include_origin(true, true)
-            .set_include_level(true)
-            .set_max_level(log::LevelFilter::Info);
+        log::set_max_level(log::LevelFilter::Info);
+        l.set_include_origin(true, true).set_include_level(true);
         assert_eq!(l.show_line_numbers(), true);
         assert_eq!(l.show_file_path(), true);
         assert_eq!(l.show_level(), true);

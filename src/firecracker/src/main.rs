@@ -45,6 +45,7 @@ const DEFAULT_INSTANCE_ID: &str = "anonymous-instance";
 const FIRECRACKER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn main() {
+    logger::set_max_level(logger::LevelFilter::Info);
     LOGGER
         .configure(Some(DEFAULT_INSTANCE_ID.to_string()))
         .expect("Failed to register logger");
