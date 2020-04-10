@@ -531,6 +531,23 @@ mod tests {
         assert_eq!(expected.as_bytes(), &log[log.len() - expected.len()..]);
     }
 
+    fn create_logger() -> Logger {
+        let logger = Logger::new();
+        logger.set_instance_id(TEST_INSTANCE_ID.to_string());
+
+        logger
+    }
+
+    fn init_logger(logger: &Logger) -> LogReader {
+        let (writer, mut reader) = log_channel();
+        assert!(logger
+            .init(TEST_APP_HEADER.to_string(), Box::new(writer))
+            .is_ok());
+        validate_log(Box::new(&mut reader), &format!("{}\n", TEST_APP_HEADER));
+
+        reader
+    }
+
     #[test]
     fn test_default_values() {
         let l = Logger::new();
@@ -626,6 +643,87 @@ mod tests {
         assert_eq!(l.show_level(), false);
         assert_eq!(l.show_file_path(), true);
         assert_eq!(l.show_line_numbers(), true);
+    }
+
+    #[test]
+    fn test_create_prefix() {
+        let logger = create_logger();
+        let mut reader = init_logger(&logger);
+
+        // test with empty instance id
+        logger.set_instance_id("".to_string());
+
+        logger
+            .set_include_level(true)
+            .set_include_origin(true, true);
+        log(&logger, Level::Info, "msg");
+        validate_log(Box::new(&mut reader), "[INFO:logger.rs:0] msg\n");
+
+        logger
+            .set_include_level(true)
+            .set_include_origin(true, false);
+        log(&logger, Level::Debug, "msg");
+        validate_log(Box::new(&mut reader), "[DEBUG:logger.rs] msg\n");
+
+        logger
+            .set_include_level(true)
+            .set_include_origin(false, true);
+        log(&logger, Level::Error, "msg");
+        validate_log(Box::new(&mut reader), "[ERROR] msg\n");
+
+        logger
+            .set_include_level(true)
+            .set_include_origin(false, false);
+        log(&logger, Level::Trace, "msg");
+        validate_log(Box::new(&mut reader), "[TRACE] msg\n");
+
+        logger
+            .set_include_level(false)
+            .set_include_origin(true, true);
+        log(&logger, Level::Info, "msg");
+        validate_log(Box::new(&mut reader), "[logger.rs:0] msg\n");
+
+        logger
+            .set_include_level(false)
+            .set_include_origin(true, false);
+        log(&logger, Level::Info, "msg");
+        validate_log(Box::new(&mut reader), "[logger.rs] msg\n");
+
+        logger
+            .set_include_level(false)
+            .set_include_origin(false, true);
+        log(&logger, Level::Info, "msg");
+        validate_log(Box::new(&mut reader), "[] msg\n");
+
+        logger
+            .set_include_level(false)
+            .set_include_origin(false, false);
+        log(&logger, Level::Info, "msg");
+        validate_log(Box::new(&mut reader), "[] msg\n");
+
+        // test with a mock instance id
+        logger.set_instance_id(TEST_INSTANCE_ID.to_string());
+
+        logger
+            .set_include_level(false)
+            .set_include_origin(false, false);
+        log(&logger, Level::Info, "msg");
+        validate_log(Box::new(&mut reader), "[TEST-INSTANCE-ID] msg\n");
+
+        logger
+            .set_include_level(true)
+            .set_include_origin(false, true);
+        log(&logger, Level::Warn, "msg");
+        validate_log(Box::new(&mut reader), "[TEST-INSTANCE-ID:WARN] msg\n");
+
+        logger
+            .set_include_level(false)
+            .set_include_origin(true, true);
+        log(&logger, Level::Info, "msg");
+        validate_log(
+            Box::new(&mut reader),
+            "[TEST-INSTANCE-ID:logger.rs:0] msg\n",
+        );
     }
 
     #[test]
