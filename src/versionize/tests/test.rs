@@ -1050,6 +1050,171 @@ fn test_versionize_union() {
     }
 }
 
+#[test]
+fn test_versionize_union_pass() {
+    let mut vm = VersionMap::new();
+    vm.new_version()
+        .set_type_version(TestUnion::type_id(), 2)
+        .new_version()
+        .set_type_version(TestUnion::type_id(), 3);
+
+    let state = TestUnion {
+        c: [
+            0x0403_0201u32,
+            0x0807_0605u32,
+            0x0000_0000u32,
+            0x2222_1111u32,
+        ],
+    };
+
+    let mut snapshot_mem = vec![0u8; 1024];
+
+    // Serialize as v1.
+    state
+        .serialize(&mut snapshot_mem.as_mut_slice(), &vm, 1)
+        .unwrap();
+    let mut restored_state =
+        <TestUnion as Versionize>::deserialize(&mut snapshot_mem.as_slice(), &vm, 1).unwrap();
+
+    // At v1, `c` field is unavailable, so when we serialize the union, the memory occupied
+    // by it will be = the max size of the fields that exist at v1 (`b` -> 4 bytes). So, when
+    // we deserialize this union, `c` field will no longer be equal with its original value
+    // (only the least significant 4 bytes will be preserved).
+    unsafe {
+        assert_eq!(restored_state.a, 0x0201i16);
+        assert_eq!(restored_state.b, 0x0403_0201i32);
+        assert_eq!(restored_state.c[0], 0x0403_0201u32);
+        assert_ne!(
+            restored_state.c,
+            [
+                0x0403_0201u32,
+                0x0807_0605u32,
+                0x0000_0000u32,
+                0x2222_1111u32
+            ]
+        );
+        assert_eq!(restored_state.d as u32, 0x0403_0201u32);
+    }
+
+    // Serialize as v2.
+    state
+        .serialize(&mut snapshot_mem.as_mut_slice(), &vm, 2)
+        .unwrap();
+    restored_state =
+        <TestUnion as Versionize>::deserialize(&mut snapshot_mem.as_slice(), &vm, 2).unwrap();
+
+    // At v2, `c` field is available. So, when we deserialize the union, we expect that `c` field
+    // will be equal with its original value.
+    unsafe {
+        assert_eq!(restored_state.a, 0x0201i16);
+        assert_eq!(restored_state.b, 0x0403_0201i32);
+        assert_eq!(
+            restored_state.c,
+            [
+                0x0403_0201u32,
+                0x0807_0605u32,
+                0x0000_0000u32,
+                0x2222_1111u32
+            ]
+        );
+        assert_eq!(restored_state.d, 0x0807_0605_0403_0201u64);
+    }
+
+    // Serialize as v3.
+    state
+        .serialize(&mut snapshot_mem.as_mut_slice(), &vm, 3)
+        .unwrap();
+    restored_state =
+        <TestUnion as Versionize>::deserialize(&mut snapshot_mem.as_slice(), &vm, 3).unwrap();
+
+    // At v3, `d` field is available and `c` field not, so the memory occupied by the union, when
+    // serializing it, will be = `d` field size (8 bytes).
+    unsafe {
+        assert_eq!(restored_state.a, 0x0201i16);
+        assert_eq!(restored_state.b, 0x0403_0201i32);
+        assert_eq!(restored_state.c[0], 0x0403_0201u32);
+        assert_eq!(restored_state.c[1], 0x0807_0605u32);
+        assert_eq!(restored_state.d, 0x0807_0605_0403_0201u64);
+    }
+}
+
+#[test]
+fn test_versionize_union_fail() {
+    let mut vm = VersionMap::new();
+    vm.new_version()
+        .set_type_version(TestUnion::type_id(), 2)
+        .new_version()
+        .set_type_version(TestUnion::type_id(), 3);
+
+    let state = TestUnion {
+        d:
+            0x0807_0605_0403_0201u64,
+    };
+
+    let mut snapshot_mem = vec![0u8; 1024];
+
+    // Serialize as v1.
+    state
+        .serialize(&mut snapshot_mem.as_mut_slice(), &vm, 1)
+        .unwrap();
+    let mut restored_state =
+        <TestUnion as Versionize>::deserialize(&mut snapshot_mem.as_slice(), &vm, 1).unwrap();
+
+    // At v1, `d` field is unavailable, so when we serialize the union, the memory occupied
+    // by it will be = the max size of the fields that exist at v1 (`b` -> 4 bytes). So, when
+    // we deserialize this union, `d` field will no longer be equal with its original value
+    // (only the least significant 4 bytes will be preserved).
+    unsafe {
+        assert_eq!(restored_state.a, 0x0201i16);
+        assert_eq!(restored_state.b, 0x0403_0201i32);
+        assert_eq!(restored_state.c[0], 0x0403_0201u32);
+        assert_eq!(restored_state.d as u32, 0x0403_0201u32);
+        assert_ne!(restored_state.d, 0x0807_0605_0403_0201u64);
+    }
+
+    // Serialize as v2.
+    state
+        .serialize(&mut snapshot_mem.as_mut_slice(), &vm, 2)
+        .unwrap();
+    restored_state =
+        <TestUnion as Versionize>::deserialize(&mut snapshot_mem.as_slice(), &vm, 2).unwrap();
+
+    // At v2, `d` field is still unavailable, so when we serialize the union, the memory occupied
+    // by it will be = the max size of the fields that exist at v2 (`c` -> 16 bytes).
+    unsafe {
+        assert_eq!(restored_state.a, 0x0201i16);
+        assert_eq!(restored_state.b, 0x0403_0201i32);
+        // this fails in --release mode.
+        assert_eq!(
+            restored_state.c,
+            [
+                0x0403_0201u32,
+                0x0807_0605u32,
+                0x0000_0000u32,
+                0x0000_0000u32
+            ]
+        );
+        assert_eq!(restored_state.d, 0x0807_0605_0403_0201u64);
+    }
+
+    // Serialize as v3.
+    state
+        .serialize(&mut snapshot_mem.as_mut_slice(), &vm, 3)
+        .unwrap();
+    restored_state =
+        <TestUnion as Versionize>::deserialize(&mut snapshot_mem.as_slice(), &vm, 3).unwrap();
+
+    // At v3, `d` field is available, so the memory occupied by the union, when serializing it,
+    // will be = `d` field size (8 bytes).
+    unsafe {
+        assert_eq!(restored_state.a, 0x0201i16);
+        assert_eq!(restored_state.b, 0x0403_0201i32);
+        assert_eq!(restored_state.c[0], 0x0403_0201u32);
+        assert_eq!(restored_state.c[1], 0x0807_0605u32);
+        assert_eq!(restored_state.d, 0x0807_0605_0403_0201u64);
+    }
+}
+
 #[allow(non_upper_case_globals)]
 #[allow(non_camel_case_types)]
 #[allow(non_snake_case)]
