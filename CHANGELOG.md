@@ -25,6 +25,12 @@
   snapshot.
 - Added a new API call, `PUT /snapshot/load`, for loading a snapshot.
 - Added metrics for the vsock device.
+- Added metrics that measure the duration of pausing and resuming the microVM,
+  from the VMM perspective.
+- Added metric for measuring the duration of the last full/diff snapshot created,
+  from the VMM perspective.
+- Added metric for measuring the duration of loading a snapshot, from the VMM
+  perspective.
 
 ### Fixed
 - Added `--version` flag to both Firecracker and Jailer.
