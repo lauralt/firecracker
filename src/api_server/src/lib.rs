@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use std::sync::{mpsc, Arc, Mutex, RwLock};
 use std::{fmt, io};
 
-use logger::{Metric, METRICS};
+use logger::{update_metric_with_elapsed_time, Metric, METRICS};
 pub use micro_http::{
     Body, HttpServer, Method, Request, RequestError, Response, ServerError, ServerRequest,
     ServerResponse, StatusCode, Version,
@@ -33,6 +33,7 @@ use seccomp::{BpfProgram, SeccompFilter};
 use utils::eventfd::EventFd;
 use vmm::rpc_interface::{VmmAction, VmmActionError, VmmData};
 use vmm::vmm_config::instance_info::InstanceInfo;
+use vmm::vmm_config::snapshot::SnapshotType;
 
 /// Shorthand type for a request containing a boxed VmmAction.
 pub type ApiRequest = Box<VmmAction>;
@@ -172,12 +173,39 @@ impl ApiServer {
     }
 
     fn serve_vmm_action_request(&self, vmm_action: Box<VmmAction>) -> Response {
+        let start_time = utils::time::get_time_us(utils::time::ClockType::Monotonic);
+        let metric_with_action = match *vmm_action {
+            #[cfg(target_arch = "x86_64")]
+            VmmAction::CreateSnapshot(ref params) => match params.snapshot_type {
+                SnapshotType::Full => Some((
+                    &METRICS.latencies_us.full_create_snapshot,
+                    "creating the full snapshot",
+                )),
+                SnapshotType::Diff => Some((
+                    &METRICS.latencies_us.diff_create_snapshot,
+                    "creating the diff snapshot",
+                )),
+            },
+            #[cfg(target_arch = "x86_64")]
+            VmmAction::LoadSnapshot(_) => {
+                Some((&METRICS.latencies_us.load_snapshot, "loading the snapshot"))
+            }
+            VmmAction::Pause => Some((&METRICS.latencies_us.pause_vm, "pausing the microVM")),
+            VmmAction::Resume => Some((&METRICS.latencies_us.resume_vm, "resuming the microVM")),
+            _ => None,
+        };
+
         self.api_request_sender
             .send(vmm_action)
             .expect("Failed to send VMM message");
         self.to_vmm_fd.write(1).expect("Cannot update send VMM fd");
         let vmm_outcome = *(self.vmm_response_receiver.recv().expect("VMM disconnected"));
-        ParsedRequest::convert_to_response(vmm_outcome)
+        let response = ParsedRequest::convert_to_response(vmm_outcome);
+
+        if let Some((metric, action)) = metric_with_action {
+            update_metric_with_elapsed_time(metric, start_time, action, "API");
+        }
+        response
     }
 
     fn get_instance_info(&self) -> Response {
