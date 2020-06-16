@@ -136,6 +136,8 @@ impl ApiServer {
         loop {
             match server.requests() {
                 Ok(request_vec) => {
+                    let request_processing_start_us =
+                        utils::time::get_time_us(utils::time::ClockType::Monotonic);
                     for server_request in request_vec {
                         server
                             .respond(
@@ -147,6 +149,12 @@ impl ApiServer {
                                 Ok(())
                             })?;
                     }
+                    let delta_us = utils::time::get_time_us(utils::time::ClockType::Monotonic)
+                        - request_processing_start_us;
+                    debug!(
+                        "Handling the request from the previous API call, including waiting for the VMM response, took {} us.",
+                        delta_us
+                    );
                 }
                 Err(e) => {
                     error!(
